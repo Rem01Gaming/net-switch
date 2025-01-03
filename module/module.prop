@@ -4,3 +4,4 @@ version=
 versionCode=
 author=Rem01Gaming
 description=Isolate apps from Internet access.
+updateJson=https://raw.githubusercontent.com/Rem01Gaming/net-switch/main/update.json
