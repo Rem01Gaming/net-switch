@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="index.css" type="text/css" rel="stylesheet">
+  <script type="module" crossorigin src="index.js" type="text/javascript"></script>
+  <script src="mmrl_css.js"></script>
+  <style>
+    .root_layout {
+      padding-top: var(--window-inset-top);
+      padding-bottom: var(--window-inset-bottom);
+    }
+  </style>
+</head>
+
+<body class="bg-white text-gray-800 dark:bg-gray-900 dark:text-gray-200 root_layout">
+  <!-- Search Bar -->
+  <div class="p-4">
+    <input 
+      type="search" 
+      id="search" 
+      placeholder="Search App" 
+      class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring focus:ring-blue-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+  </div>
+
+  <!-- Apps List -->
+  <div id="apps-list" class="space-y-4 px-4"></div>
+
+  <!-- App Template -->
+  <template id="app-template">
+    <div class="border border-gray-300 rounded-md p-4 dark:border-gray-700">
+      <div class="flex justify-between items-center">
+        <p class="m-0 overflow-wrap break-words max-w-full text-sm dark:text-gray-200"></p>
+        <input type="checkbox" class="ml-auto">
+      </div>
+    </div>
+  </template>
+</body>
+
+</html>
