@@ -5,7 +5,7 @@ done
 
 packages="$(cat /data/adb/net-switch/isolated.json | tr -d '[]" ' | tr ',' ' ')"
 for apk in $packages; do
-	uid="$(dumpsys package $apk 2>/dev/null | awk -F'=' '/userId=/ {print $2; exit}')"
+	uid="$(stat -c '%u' /data/data/$apk)"
 	iptables -I OUTPUT -m owner --uid-owner $uid -j DROP
 	iptables -I INPUT -m owner --uid-owner $uid -j DROP
 done
