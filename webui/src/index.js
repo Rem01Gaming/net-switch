@@ -45,13 +45,13 @@ function populateApp(name, checked) {
 
 		if (checkbox.checked) {
 			isolate_list.push(name);
-			await run(`iptables -I OUTPUT -m owner --uid-owner ${app_uid} -j DROP`);
-			await run(`iptables -I INPUT -m owner --uid-owner ${app_uid} -j DROP`);
+			await run(`iptables -I OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
+			await run(`ip6tables -I OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
 		} else {
 			const index = isolate_list.indexOf(name);
 			if (index !== -1) isolate_list.splice(index, 1);
-			await run(`iptables -D OUTPUT -m owner --uid-owner ${app_uid} -j DROP`);
-			await run(`iptables -D INPUT -m owner --uid-owner ${app_uid} -j DROP`);
+			await run(`iptables -D OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
+			await run(`ip6tables -D OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
 		}
 	});
 
