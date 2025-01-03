@@ -34,15 +34,6 @@ function populateApp(name, checked) {
 	checkbox.addEventListener('change', async () => {
 		const app_uid = await run(`dumpsys package ${name} 2>/dev/null | awk -F'=' '/userId=/ {print $2; exit}'`);
 
-		// Save updated isolate_list to isolated.json
-		await run(`echo '${JSON.stringify(isolate_list)}' >/data/adb/net-switch/isolated.json`);
-
-		// Handle empty UID
-		if (typeof app_uid === "number" && !isNaN(app_uid)) {
-            toast("Something is wrong, please reboot to take affect.");
-            return;
-        }
-
 		if (checkbox.checked) {
 			isolate_list.push(name);
 			await run(`iptables -I OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
@@ -53,6 +44,14 @@ function populateApp(name, checked) {
 			await run(`iptables -D OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
 			await run(`ip6tables -D OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
 		}
+
+		// Save updated isolate_list to isolated.json
+		await run(`echo '${JSON.stringify(isolate_list)}' >/data/adb/net-switch/isolated.json`);
+
+		// Handle empty UID
+		if (typeof app_uid === "number" && !isNaN(app_uid)) {
+            toast("Something is wrong, please reboot to take affect.");
+        }
 	});
 
 	appsList.appendChild(node);
