@@ -34,6 +34,11 @@ function populateApp(name, checked) {
 	checkbox.addEventListener('change', async () => {
 		const app_uid = await run(`dumpsys package ${name} 2>/dev/null | awk -F'=' '/userId=/ {print $2; exit}'`);
 
+		// Handle empty UID
+		if (!app_uid || isNaN(app_uid)) {
+            toast("Failed to fetch UID, please reboot to take affect.");
+        }
+
 		if (checkbox.checked) {
 			isolate_list.push(name);
 			await run(`iptables -I OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
@@ -47,11 +52,6 @@ function populateApp(name, checked) {
 
 		// Save updated isolate_list to isolated.json
 		await run(`echo '${JSON.stringify(isolate_list)}' >/data/adb/net-switch/isolated.json`);
-
-		// Handle empty UID
-		if (typeof app_uid === "number" && !isNaN(app_uid)) {
-            toast("Something is wrong, please reboot to take affect.");
-        }
 	});
 
 	appsList.appendChild(node);
