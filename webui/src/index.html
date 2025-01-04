@@ -33,7 +33,14 @@
     <div class="border border-gray-300 rounded-md p-4 dark:border-gray-700">
       <div class="flex justify-between items-center">
         <p class="m-0 overflow-wrap break-words max-w-full text-sm dark:text-gray-200"></p>
-        <input type="checkbox" class="ml-auto">
+        
+        <!-- Switch -->
+        <label class="relative inline-flex items-center cursor-pointer ml-auto">
+          <input type="checkbox" class="sr-only peer">
+          <div class="w-11 h-6 bg-gray-200 rounded-full peer dark:bg-gray-700 peer-checked:bg-blue-600 peer-focus:ring-2 peer-focus:ring-blue-300">
+          </div>
+          <div class="absolute w-4 h-4 bg-white rounded-full border border-gray-300 left-1 top-1 transition-transform peer-checked:translate-x-5 dark:border-gray-600 dark:peer-checked:border-white"></div>
+        </label>
       </div>
     </div>
   </template>
