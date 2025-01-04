@@ -36,7 +36,7 @@ function populateApp(name, checked) {
 
 		// Handle empty UID
 		if (!app_uid || isNaN(app_uid)) {
-            toast("Failed to fetch UID, please reboot to take affect.");
+            toast(`Reboot to take affect on ${name}.`);
             await run(`echo '${JSON.stringify(isolate_list)}' >/data/adb/net-switch/isolated.json`);
             return;
         }
