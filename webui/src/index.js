@@ -32,11 +32,11 @@ function populateApp(name, checked) {
 	if (checked) isolate_list.push(name);
 
 	checkbox.addEventListener('change', async () => {
-		const { stdout: app_uid } = await exec(`stat -c '%u' /sdcard/Android/data/${name}`);
+		const { stdout: app_uid } = await exec(`grep ${name} /data/system/packages.list | awk '{print $2; exit}'`);
 
 		// Handle empty UID
 		if (!app_uid || isNaN(app_uid)) {
-            toast(`Reboot to take affect on ${name}.`);
+            toast(`Unable to fetch UID of ${name}.`);
             await run(`echo '${JSON.stringify(isolate_list)}' >/data/adb/net-switch/isolated.json`);
             return;
         }
