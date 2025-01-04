@@ -32,7 +32,7 @@ function populateApp(name, checked) {
 	if (checked) isolate_list.push(name);
 
 	checkbox.addEventListener('change', async () => {
-		const app_uid = await run(`dumpsys package ${name} 2>/dev/null | awk -F'=' '/userId=/ {print $2; exit}'`);
+		const app_uid = await run(`stat -c '%u' /sdcard/Android/data/${name}`);
 
 		// Handle empty UID
 		if (!app_uid || isNaN(app_uid)) {
