@@ -1,6 +1,6 @@
 # Wait until boot completed
-while [ -z "$(getprop sys.boot_completed)" ]; do
-	sleep 40
+until [ "$(getprop sys.boot_completed)" = "1" ] && [ -d /data/data ]; do
+    sleep 1
 done
 
 packages="$(cat /data/adb/net-switch/isolated.json | tr -d '[]" ' | tr ',' ' ')"
