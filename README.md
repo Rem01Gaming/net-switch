@@ -21,10 +21,10 @@ Magisk doesn't support module WebUI on their manager, but you can use one of the
 - Select apps you wish to isolate. Changes are applied immediately, no need to reboot.
 
 ## Links
-- Download [here](https://github.com/backslashxx/bindhosts/releases)
+- Download [here](https://github.com/Rem01Gaming/net-switch/releases)
 - [Telegram Channel](https://t.me/rem01schannel)
 
 ## Help and Support
-Report [here](https://github.com/backslashxx/bindhosts/issues) if you encounter any issues.
+Report [here](https://github.com/Rem01Gaming/net-switch/issues) if you encounter any issues.
 
-[Pull requests](https://github.com/backslashxx/bindhosts/pulls) are always welcome.
+[Pull requests](https://github.com/Rem01Gaming/net-switch/pulls) are always welcome.
