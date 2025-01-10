@@ -28,6 +28,7 @@ netstate unblock <package> | to unblock packages
 netstat list | to show currently blocked packages
 netstat unblock all | to unblock all restricted packages.
 ```
+- Terminal Screenshot 
 - ![Example](./terminal.png)
 
 
