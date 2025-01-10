@@ -23,10 +23,10 @@ Magisk doesn't support module WebUI on their manager, but you can use one of the
 ## Terminal Usage
 Open Termux or Any Terminal with root access and run
 ```
-netstat block <package> | to block packages
-netstate unblock <package> | to unblock packages
-netstat list | to show currently blocked packages
-netstat unblock all | to unblock all restricted packages.
+netswitch block <package> | to block packages
+netswitch unblock <package> | to unblock packages
+netswitch list | to show currently blocked packages
+netswitch unblock all | to unblock all restricted packages.
 ```
 Terminal Screenshot
 ![Net-switch Terminal Example](./terminal.png)
