@@ -20,18 +20,16 @@ Magisk doesn't support module WebUI on their manager, but you can use one of the
 - Open Net Switch WebUI
 - Select apps you wish to isolate. Changes are applied immediately, no need to reboot.
 
-## *Terminal Usage
-- open Termux or Any Terminal with root access and run
+## Terminal Usage
+Open Termux or Any Terminal with root access and run
 ```
 netstat block <package> | to block packages
 netstate unblock <package> | to unblock packages
 netstat list | to show currently blocked packages
 netstat unblock all | to unblock all restricted packages.
 ```
-- Terminal Screenshot 
-- ![Example](./terminal.png)
-
-
+Terminal Screenshot
+![Net-switch Terminal Example](./terminal.png)
 
 ## Links
 - Download [here](https://github.com/Rem01Gaming/net-switch/releases)
