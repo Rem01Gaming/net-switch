@@ -2,136 +2,150 @@
 
 JSON_FILE="/data/adb/net-switch/isolated.json"
 
+cli_usage() {
+	echo "Usage: netswitch {block|unblock|list} [package-name...]"
+	echo "Commands:"
+	echo "  block <package-name> [package-name...]    Block internet access for specified packages"
+	echo "  unblock <package-name|all> [package-name...]  Unblock internet access for specified packages"
+	echo "  list                                   Show currently blocked packages"
+}
+
 get_uid() {
-    package="$1"
-    uid="$(pm list packages -U | grep "^package:$package " | sed 's/.*uid:\([0-9]*\).*/\1/' | cut -d',' -f1)"
-    if [ -n "$uid" ]; then
-        echo "$uid"
-        return 0
-    fi
-    return 1
+	package="$1"
+	uid="$(pm list packages -U | grep "^package:$package " | sed 's/.*uid:\([0-9]*\).*/\1/' | cut -d',' -f1)"
+	[ ! -n "$uid" ] && return 1
+	echo "$uid"
+	return 0
 }
 
 read_json() {
-    if [ -f "$JSON_FILE" ]; then
-        cat "$JSON_FILE" | tr -d '[]" ' | tr ',' ' '
-    fi
+	if [ -f "$JSON_FILE" ]; then
+		cat "$JSON_FILE" | tr -d '[]" ' | tr ',' ' '
+	fi
 }
 
 write_json() {
-    if [ $# -eq 0 ]; then
-        echo "[]" > "$JSON_FILE"
-    else
-        (printf "["; first=1; for pkg in "$@"; do
-            if [ $first -eq 1 ]; then
-                printf "\"%s\"" "$pkg"
-                first=0
-            else
-                printf ",\"%s\"" "$pkg"
-            fi
-        done; printf "]") > "$JSON_FILE"
-    fi
+	if [ $# -eq 0 ]; then
+		echo "[]" >"$JSON_FILE"
+		return 0
+	fi
+
+	(
+		printf "["
+		first=1
+		for pkg in "$@"; do
+			if [ $first -eq 1 ]; then
+				printf "\"%s\"" "$pkg"
+				first=0
+			else
+				printf ",\"%s\"" "$pkg"
+			fi
+		done
+		printf "]"
+	) >"$JSON_FILE"
 }
 
 block_package() {
-    package="$1"
-    uid="$(get_uid "$package")"
-    if [ $? -ne 0 ] || [ -z "$uid" ]; then
-        echo "Error: Package '$package' not found"
-        return 1
-    fi
-    iptables -I OUTPUT -m owner --uid-owner "$uid" -j REJECT
-    ip6tables -I OUTPUT -m owner --uid-owner "$uid" -j REJECT
-    current_packages="$(read_json)"
-    for p in $current_packages; do
-        if [ "$p" = "$package" ]; then
-            echo "Package $package is already blocked"
-            return 0
-        fi
-    done
-    write_json $current_packages $package
-    echo "Blocked internet access for $package (UID: $uid)"
+	package="$1"
+	uid="$(get_uid "$package")"
+	if [ $? -ne 0 ] || [ -z "$uid" ]; then
+		echo "Error: Package '$package' not found"
+		return 1
+	fi
+
+	iptables -I OUTPUT -m owner --uid-owner "$uid" -j REJECT
+	ip6tables -I OUTPUT -m owner --uid-owner "$uid" -j REJECT
+
+	current_packages="$(read_json)"
+	for app in $current_packages; do
+		if [ "$app" = "$package" ]; then
+			echo "Package $package is already blocked"
+			return 0
+		fi
+	done
+
+	write_json $current_packages $package
+	echo "Blocked internet access for $package (UID: $uid)"
 }
 
 unblock_package() {
-    package="$1"
-    uid="$(get_uid "$package")"
-    if [ $? -ne 0 ] || [ -z "$uid" ]; then
-        echo "Error: Package '$package' not found"
-        return 1
-    fi
-    iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null
-    ip6tables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null
-    current_packages="$(read_json)"
-    new_packages=""
-    for p in $current_packages; do
-        if [ "$p" != "$package" ]; then
-            new_packages="$new_packages $p"
-        fi
-    done
-    write_json $new_packages
-    echo "Unblocked internet access for $package (UID: $uid)"
+	package="$1"
+	uid="$(get_uid "$package")"
+	if [ $? -ne 0 ] || [ -z "$uid" ]; then
+		echo "Error: Package '$package' not found"
+		return 1
+	fi
+
+	iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null
+	ip6tables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null
+
+	current_packages="$(read_json)"
+	new_packages=""
+	for app in $current_packages; do
+		[ "$app" != "$package" ] && new_packages="$new_packages $app"
+	done
+
+	write_json $new_packages
+	echo "Unblocked internet access for $package (UID: $uid)"
 }
 
 unblock_all() {
-    for package in $(read_json); do
-        unblock_package "$package"
-    done
-    write_json
-    echo "Unblocked all packages"
+	for package in $(read_json); do
+		unblock_package "$package"
+	done
+	write_json
+	echo "Unblocked all packages"
 }
 
 list_blocked() {
-    packages="$(read_json)"
-    if [ -z "$packages" ]; then
-        echo "No packages are currently blocked"
-    else
-        echo "Currently blocked packages:"
-        for package in $packages; do
-            uid="$(get_uid "$package")" 
-            if [ $? -eq 0 ] && [ -n "$uid" ]; then
-                echo "- $package (UID: $uid)"
-            else
-                echo "- $package (package no longer exists)"
-            fi
-        done
-    fi
+	packages="$(read_json)"
+	if [ -z "$packages" ]; then
+		echo "No packages are currently blocked"
+		exit 0
+	fi
+
+	echo "Currently blocked packages:"
+	for package in $packages; do
+		uid="$(get_uid "$package")"
+		if [ $? -eq 0 ] && [ -n "$uid" ]; then
+			echo "- $package (UID: $uid)"
+		else
+			echo "- $package (package no longer exists)"
+		fi
+	done
+}
+
+handle_block() {
+	if [ $# -eq 0 ]; then
+		echo -e "Error: Bad arguments\nTry 'netswitch help' for more information."
+		exit 1
+	fi
+
+	for package in "$@"; do
+		block_package "$package"
+	done
+}
+
+handle_unblock() {
+	if [ $# -eq 0 ]; then
+		echo -e "Error: Bad arguments\nTry 'netswitch help' for more information."
+		exit 1
+	fi
+
+	if [ "$1" = "all" ]; then
+		unblock_all
+		exit 0
+	fi
+
+	for package in "$@"; do
+		unblock_package "$package"
+	done
 }
 
 case "$1" in
-    "block")
-        shift
-        if [ $# -eq 0 ]; then
-            echo "Usage: netswitch block <package-name> [package-name...]"
-            exit 1
-        fi
-        for package in "$@"; do
-            block_package "$package"
-        done
-        ;;
-    "unblock")
-        shift
-        if [ $# -eq 0 ]; then
-            echo "Usage: netswitch unblock <package-name|all> [package-name...]"
-            exit 1
-        fi
-        if [ "$1" = "all" ]; then
-            unblock_all
-        else
-            for package in "$@"; do
-                unblock_package "$package"
-            done
-        fi
-        ;;
-    "list")
-        list_blocked
-        ;;
-    *)
-        echo "Usage: netswitch {block|unblock|list} [package-name...]"
-        echo "Commands:"
-        echo "  block <package-name> [package-name...]    Block internet access for specified packages"
-        echo "  unblock <package-name|all> [package-name...]  Unblock internet access for specified packages"
-        echo "  list                                   Show currently blocked packages"
-        exit 1
-        ;;
+"block") shift && handle_block $@ ;;
+"unblock") shift && handle_unblock $@ ;;
+"list") list_blocked ;;
+"help") cli_usage ;;
+*) cli_usage && exit 1 ;;
 esac

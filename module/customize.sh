@@ -11,10 +11,10 @@ if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
 	touch "$MODPATH/skip_mount"
 	# symlink ourselves on $PATH
 	manager_paths="/data/adb/ap/bin /data/adb/ksu/bin"
-	for i in $manager_paths; do 
-		if [ -d "$i" ]; then
-			echo "[+] creating symlink in $i"
-			ln -sf /data/adb/modules/net-switch/system/bin/netswitch "$i/netswitch"
+	for dir in $manager_paths; do
+		if [ -d "$dir" ]; then
+			echo "[+] creating symlink in $dir"
+			ln -sf /data/adb/modules/net-switch/system/bin/netswitch "$dir/netswitch"
 		fi
 	done
 fi
