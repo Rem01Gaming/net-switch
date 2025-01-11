@@ -5,6 +5,18 @@ if [ ! -f $ISOLATED ]; then
 fi
 
 if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
-	rm $MODPATH/action.sh
+	# remove action on APatch / KernelSU
+	rm "$MODPATH/action.sh"
+	# skip mount on APatch / KernelSU
+	touch "$MODPATH/skip_mount"
+	# symlink ourselves on $PATH
+	manager_paths="/data/adb/ap/bin /data/adb/ksu/bin"
+	for i in $manager_paths; do 
+		if [ -d "$i" ]; then
+			echo "[+] creating symlink in $i"
+			ln -sf /data/adb/modules/net-switch/system/bin/netswitch "$i/netswitch"
+		fi
+	done
 fi
+
 set_perm_recursive "$MODPATH/system" 0 0 0755 0755
