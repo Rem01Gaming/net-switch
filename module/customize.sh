@@ -13,7 +13,7 @@ if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
 	manager_paths="/data/adb/ap/bin /data/adb/ksu/bin"
 	for dir in $manager_paths; do
 		if [ -d "$dir" ]; then
-			echo "[+] creating symlink in $dir"
+			echo "- creating symlink in $dir"
 			ln -sf /data/adb/modules/net-switch/system/bin/netswitch "$dir/netswitch"
 		fi
 	done

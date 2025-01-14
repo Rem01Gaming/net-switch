@@ -15,9 +15,6 @@ release_code="$(git rev-list HEAD --count)-$(git rev-parse --short HEAD)-release
 sed -i "s/version=.*/version=$version ($release_code)/" module/module.prop
 sed -i "s/versionCode=.*/versionCode=$version_code/" module/module.prop
 
-# Compile Gamelist
-bash gamelist_compile.sh
-
 # Copy module files
 cp -r ./src/libs module
 cp -r ./src/scripts/* module/system/bin

@@ -1,4 +1,4 @@
-name: Build Encore Zip
+name: Build Module Zip
 
 on:
   workflow_dispatch:
