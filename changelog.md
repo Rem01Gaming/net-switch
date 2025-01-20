@@ -1,7 +1,8 @@
-## 1.0
+## 1.1
 
-- Initial Release
+- Introduce netswitch settings via cmd
+- scripts/customize: skip_mount on ap/ksu
+- scripts/service: sedify package listing
 
 ---
-
-SHA256: 930ac09a861ed83743a0c742ec846146125c9fc636ce3dcdf6a4a0a58f524581
+**SHA256**: `043dc544e700baf403f7fa4379a6be9c4db6bd54e3298b972e108c2bb2137e18`
