@@ -32,7 +32,7 @@ function populateApp(name, checked) {
 	if (checked) isolate_list.push(name);
 
 	checkbox.addEventListener('change', async () => {
-		const { stdout: app_uid } = await exec(`grep ${name} /data/system/packages.list | awk '{print $2; exit}'`);
+		const { stdout: app_uid } = await exec(`grep "^${name}" /data/system/packages.list | awk '{print $2; exit}'`);
 
 		// Handle empty UID
 		if (!app_uid || isNaN(app_uid)) {

@@ -6,7 +6,7 @@ done
 
 packages="$(sed 's|[]\"[]||g; s|,| |g' /data/adb/net-switch/isolated.json)"
 for apk in $packages; do
-	uid="$(grep $apk /data/system/packages.list | awk '{print $2; exit}')"
+	uid="$(grep "^$apk" /data/system/packages.list | awk '{print $2; exit}')"
 	[ ! -z $uid ] && {
 		iptables -I OUTPUT -m owner --uid-owner $uid -j REJECT
 		ip6tables -I OUTPUT -m owner --uid-owner $uid -j REJECT
