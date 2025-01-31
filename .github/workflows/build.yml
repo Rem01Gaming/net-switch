@@ -22,11 +22,14 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+
     - name: Build WebUI
       working-directory: ./webui
       run: |
-        npm install
-        npm run build
+        bun install
+        bun run build
         cp ./dist/* ../module/webroot
 
     - name: Compile Flashable Zip
