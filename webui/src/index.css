@@ -9,3 +9,8 @@ input[type="search"]::-webkit-search-cancel-button {
   background: white;
   border-radius: 50%;
 }
+
+.root_layout {
+  padding-top: var(--window-inset-top);
+  padding-bottom: var(--window-inset-bottom);
+}
