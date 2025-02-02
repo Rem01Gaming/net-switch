@@ -4,96 +4,95 @@ const template = document.getElementById('app-template').content;
 const appsList = document.getElementById('apps-list');
 
 async function run(cmd) {
-	const { errno, stdout, stderr } = await exec(cmd);
-	if (errno != 0) {
-		toast(`stderr: ${stderr}`);
-		return undefined;
-	} else {
-		return stdout;
-	}
+    const { errno, stdout, stderr } = await exec(cmd);
+    if (errno !== 0) {
+        toast(`stderr: ${stderr}`);
+        return undefined;
+    }
+    return stdout;
 }
 
 function sortChecked() {
-	[...appsList.children]
-		.sort((a, _b) => a.querySelector('input[type="checkbox"]').checked ? -1 : 1)
-		.forEach((node) => appsList.appendChild(node));
+    [...appsList.children]
+        .sort((a, b) => (a.querySelector('input[type="checkbox"]').checked ? -1 : 1))
+        .forEach((node) => appsList.appendChild(node));
 }
 
-const isolate_list = [];
+const isolateList = [];
 
 function populateApp(name, checked) {
-	const node = document.importNode(template, true);
-	const nameElement = node.querySelector('p');
-	nameElement.textContent = name;
+    const node = document.importNode(template, true);
+    const nameElement = node.querySelector('p');
+    nameElement.textContent = name;
 
-	const checkbox = node.querySelector('input[type="checkbox"]');
-	checkbox.checked = checked;
+    const checkbox = node.querySelector('input[type="checkbox"]');
+    checkbox.checked = checked;
 
-	if (checked) isolate_list.push(name);
+    if (checked) isolateList.push(name);
 
-	checkbox.addEventListener('change', async () => {
-		const { stdout: app_uid } = await exec(`grep "^${name}" /data/system/packages.list | awk '{print $2; exit}'`);
+    checkbox.addEventListener('change', async () => {
+        const { stdout: appUid } = await exec(`grep "^${name}" /data/system/packages.list | awk '{print $2; exit}'`);
 
-		// Handle empty UID
-		if (!app_uid || isNaN(app_uid)) {
+        if (!appUid || isNaN(appUid)) {
             toast(`Unable to fetch UID of ${name}.`);
-            await run(`echo '${JSON.stringify(isolate_list)}' >/data/adb/net-switch/isolated.json`);
+            await saveIsolateList();
             return;
         }
 
-		if (checkbox.checked) {
-			isolate_list.push(name);
-			await run(`iptables -I OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
-			await run(`ip6tables -I OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
-		} else {
-			const index = isolate_list.indexOf(name);
-			if (index !== -1) isolate_list.splice(index, 1);
-			await run(`iptables -D OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
-			await run(`ip6tables -D OUTPUT -m owner --uid-owner ${app_uid} -j REJECT`);
-		}
+        if (checkbox.checked) {
+            isolateList.push(name);
+            await run(`iptables -I OUTPUT -m owner --uid-owner ${appUid} -j REJECT`);
+            await run(`ip6tables -I OUTPUT -m owner --uid-owner ${appUid} -j REJECT`);
+        } else {
+            const index = isolateList.indexOf(name);
+            if (index !== -1) isolateList.splice(index, 1);
+            await run(`iptables -D OUTPUT -m owner --uid-owner ${appUid} -j REJECT`);
+            await run(`ip6tables -D OUTPUT -m owner --uid-owner ${appUid} -j REJECT`);
+        }
 
-		// Save updated isolate_list to isolated.json
-		await run(`echo '${JSON.stringify(isolate_list)}' >/data/adb/net-switch/isolated.json`);
-	});
+        await saveIsolateList();
+    });
 
-	appsList.appendChild(node);
+    appsList.appendChild(node);
+}
+
+async function saveIsolateList() {
+    await run(`echo '${JSON.stringify(isolateList)}' >/data/adb/net-switch/isolated.json`);
 }
 
 async function main() {
-	// Fetch all packages
-	const pkgs = await run("pm list packages");
-	if (pkgs === undefined) return;
+    // Fetch all installed packages
+    const pkgs = await run("pm list packages");
+    if (pkgs === undefined) return;
 
-	// Fetch isolated apps list
-	const isolatedListOut = await run("cat /data/adb/net-switch/isolated.json");
-	const isolated = isolatedListOut ? JSON.parse(isolatedListOut) : [];
-	const uninstalled = [...isolated];
+    // Fetch isolated apps list
+    const isolatedListOut = await run("cat /data/adb/net-switch/isolated.json");
+    let isolated = isolatedListOut ? JSON.parse(isolatedListOut) : [];
 
-	// Populate the app list
-	for (const pkg of pkgs.split('\n').map((line) => line.split(':')[1])) {
-		if (!pkg) continue;
-		const isIsolated = isolated.includes(pkg);
-		populateApp(pkg, isIsolated);
+    // Clean up uninstalled apps from isolated.json
+    const installedPackages = new Set(pkgs.split('\n').map((line) => line.split(':')[1]).filter(Boolean));
+    const updatedIsolatedList = isolated.filter((app) => installedPackages.has(app));
 
-		// Remove installed apps from uninstalled list
-		if (isIsolated) {
-			const index = uninstalled.indexOf(pkg);
-			if (index > -1) uninstalled.splice(index, 1);
-		}
-	}
+    if (isolated.length !== updatedIsolatedList.length) {
+        await run(`echo '${JSON.stringify(updatedIsolatedList)}' >/data/adb/net-switch/isolated.json`);
+        isolated = updatedIsolatedList; // Update the isolated list for the rest of the function
+    }
 
-	// Add uninstalled apps to the list
-	for (const pkg of uninstalled) populateApp(pkg, true);
+    // Populate the app list
+    for (const pkg of installedPackages) {
+        const isIsolated = isolated.includes(pkg);
+        populateApp(pkg, isIsolated);
+    }
 
-	sortChecked();
+    sortChecked();
 
-	// Add search functionality
-	document.getElementById("search").addEventListener('input', (e) => {
-    	const searchVal = e.target.value.toLowerCase();
-    	[...appsList.children].forEach((node) => {
-	    	const appName = node.querySelector('p').textContent.toLowerCase();
-		    node.style.display = appName.includes(searchVal) ? '' : 'none';
-	    });
+    // Add search functionality
+    document.getElementById("search").addEventListener('input', (e) => {
+        const searchVal = e.target.value.toLowerCase();
+        [...appsList.children].forEach((node) => {
+            const appName = node.querySelector('p').textContent.toLowerCase();
+            node.style.display = appName.includes(searchVal) ? '' : 'none';
+        });
     });
 }
 
