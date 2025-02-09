@@ -1,4 +1,4 @@
-name: Build Encore Zip
+name: Build Module Zip
 
 on:
   workflow_dispatch:
@@ -22,16 +22,25 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+
     - name: Build WebUI
       working-directory: ./webui
       run: |
-        npm install
-        npm run build
-        cp ./dist/* ../module/webroot
+        bun install
+        bun run build
+        cp -r ./dist/* ../module/webroot
 
     - name: Compile Flashable Zip
       id: compileZip
       run: bash .github/scripts/compile_zip.sh
+
+    - name: Upload Compiled Zip as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Flashable-Zip
+        path: net-switch-*.zip
 
     - name: Upload To Telegram
       env:
