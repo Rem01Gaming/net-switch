@@ -3,6 +3,8 @@ import { exec, toast } from 'kernelsu';
 const template = document.getElementById('app-template').content;
 const appsList = document.getElementById('apps-list');
 
+const configPath = "/data/adb/.config/net-switch/isolated.json"
+
 async function run(cmd) {
     const { errno, stdout, stderr } = await exec(cmd);
     if (errno !== 0) {
@@ -57,7 +59,7 @@ function populateApp(name, checked) {
 }
 
 async function saveIsolateList() {
-    await run(`echo '${JSON.stringify(isolateList)}' >/data/adb/net-switch/isolated.json`);
+    await run(`echo '${JSON.stringify(isolateList)}' >${configPath}`);
 }
 
 async function main() {
@@ -66,7 +68,7 @@ async function main() {
     if (pkgs === undefined) return;
 
     // Fetch isolated apps list
-    const isolatedListOut = await run("cat /data/adb/net-switch/isolated.json");
+    const isolatedListOut = await run(`cat ${configPath}`);
     let isolated = isolatedListOut ? JSON.parse(isolatedListOut) : [];
 
     // Clean up uninstalled apps from isolated.json
@@ -74,7 +76,7 @@ async function main() {
     const updatedIsolatedList = isolated.filter((app) => installedPackages.has(app));
 
     if (isolated.length !== updatedIsolatedList.length) {
-        await run(`echo '${JSON.stringify(updatedIsolatedList)}' >/data/adb/net-switch/isolated.json`);
+        await run(`echo '${JSON.stringify(updatedIsolatedList)}' >${configPath}`);
         isolated = updatedIsolatedList; // Update the isolated list for the rest of the function
     }
 
