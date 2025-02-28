@@ -1,5 +1,9 @@
 {
+<<<<<<< HEAD
+  "name": "net-witch",
+=======
   "name": "net-switch",
+>>>>>>> c7e309b62388213611660eb0b9ba3fea9ade11ac
   "version": "1.0.0",
   "author": "Rem01Gaming",
   "license": "Apache-2.0",
@@ -22,6 +26,10 @@
   },
   "dependencies": {
     "kernelsu": "^1.0.6",
+<<<<<<< HEAD
+    "mmrl": "^0.0.5"
+=======
     "mmrl": "^0.2.22"
+>>>>>>> c7e309b62388213611660eb0b9ba3fea9ade11ac
   }
 }
