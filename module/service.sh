@@ -4,7 +4,7 @@ until [ "$(getprop sys.boot_completed)" = "1" ] && [ -f /data/system/packages.li
 	sleep 1
 done
 
-packages="$(sed 's|[]\"[]||g; s|,| |g' /data/adb/net-switch/isolated.json)"
+packages="$(sed 's|[]\"[]||g; s|,| |g' /data/adb/.config/net-switch/isolated.json)"
 for apk in $packages; do
 	uid="$(grep "^$apk" /data/system/packages.list | awk '{print $2; exit}')"
 	[ ! -z $uid ] && {

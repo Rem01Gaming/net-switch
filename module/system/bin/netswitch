@@ -1,6 +1,6 @@
 #!/bin/sh
 
-JSON_FILE="/data/adb/net-switch/isolated.json"
+JSON_FILE="/data/adb/.config/net-switch/isolated.json"
 
 cli_usage() {
 	echo "Usage: netswitch {block|unblock|list} [package-name...]"
