@@ -1,6 +1,6 @@
 ISOLATED="/data/adb/.config/net-switch/isolated.json"
 if [ ! -f $ISOLATED ]; then
-	mkdir $(dirname $ISOLATED)
+	mkdir -p $(dirname $ISOLATED)
 	touch $ISOLATED
 fi
 
