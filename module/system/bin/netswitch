@@ -12,7 +12,7 @@ cli_usage() {
 
 get_uid() {
 	package="$1"
-	uid="$(pm list packages -U | grep "^package:$package " | sed 's/.*uid:\([0-9]*\).*/\1/' | cut -d',' -f1)"
+	uid="$(grep "^$package" /data/system/packages.list | awk '{print $2; exit}')"
 	[ ! -n "$uid" ] && return 1
 	echo "$uid"
 	return 0
