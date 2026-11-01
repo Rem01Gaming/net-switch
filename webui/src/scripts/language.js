@@ -189,8 +189,7 @@ async function initI18n() {
       const button = document.createElement("button");
       button.textContent = name;
       button.dataset.lang = code;
-      button.className =
-        "btn btn-block bg-primary hover:bg-primary text-on-primary py-1 w-full rounded-md text-left";
+      button.className = "w-full rounded border p-2 text-left dark:border-gray-600";
       button.setAttribute("role", "button");
       button.setAttribute("aria-pressed", "false");
       languageSelection.appendChild(button);
@@ -198,34 +197,13 @@ async function initI18n() {
 
     // Determine initial language
     const savedLang = localStorage.getItem("selectedLanguage");
-    const browserLangs = [
-      ...(navigator.languages || []),
-      navigator.language,
-      navigator.userLanguage,
-    ].filter(Boolean);
-
-    let lang = savedLang || "en";
-    if (!savedLang) {
-      for (const browserLang of browserLangs) {
-        const normalizedLang = browserLang.toLowerCase().replace(/_/g, "-");
-        if (allLanguages[normalizedLang]) {
-          lang = normalizedLang;
-          break;
-        }
-        const baseLang = normalizedLang.split("-")[0];
-        if (allLanguages[baseLang]) {
-          lang = baseLang;
-          break;
-        }
-      }
-    }
+    const lang = savedLang || "en";
 
     currentTranslations = await loadTranslations(lang);
     applyTranslations(currentTranslations);
 
     // Handle settings button click
     languageBtn.addEventListener("click", () => {
-      document.documentElement.classList.add("modal-open");
       languageModal.showModal();
     });
 

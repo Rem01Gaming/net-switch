@@ -12,7 +12,7 @@ Fully standalone, operates fully on iptables.
 - Module WebUI for easy configuration
 - **Profiles**: Save and restore sets of isolated apps (new in v1.3)
 - **Backup Manager**: Save and restore created profiles (new in v1.3)
-- **Revamped WebUI**: Responsive design with animations and feedback (new in v1.3)
+- Simple app list with an independent switch for each Android user
 
 ## Supported Root Managers
 - [APatch](https://github.com/bmax121/APatch) 
@@ -47,11 +47,16 @@ Terminal Screenshot
 
 ## Android users and profiles
 
-Select an **Android user / profile** in the WebUI to manage that user's apps
-independently. The same package can be isolated in a work profile and allowed in
-user 0. The list includes stopped users and paused profiles. **Isolate in all
+Each WebUI row identifies its Android user next to the package name (for example,
+`User 10 · com.example.app`). Each switch manages that instance independently.
+The same package can be isolated in a work profile and allowed in user 0.
+The list includes stopped users and paused profiles. **Isolate in all
 existing users** selects the currently installed instances; each remains
 independently editable. It does not automatically select future users.
+
+The WebUI uses the simple v1.2 list layout and defaults to English. Other
+languages remain available through **Select Language**. Saved profiles and the
+backup manager are retained under the collapsed **Profile Management** section.
 
 ```sh
 netswitch block --user 10 com.example.app

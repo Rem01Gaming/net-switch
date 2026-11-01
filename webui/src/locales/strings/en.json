@@ -45,6 +45,8 @@
   "import_success": "Profiles imported successfully",
   "import_export_title": "Import / Export Profiles",
   "android_user": "Android user / profile",
+  "user_label": "User {0}",
+  "delete_profile": "Delete",
   "all_android_users": "All Android users / profiles",
   "user_running": "running",
   "user_not_running": "not running / unavailable",

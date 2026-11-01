@@ -2,7 +2,6 @@
 import { exec, toast } from "kernelsu";
 import { shellQuote, normalizeSelections, normalizeProfiles, parseSnapshot, isolationState, needsUidConsent } from "./backend.js";
 import "./language.js";
-import "@fortawesome/fontawesome-free/css/all.min.css";
 
 const template = document.getElementById("app-template").content;
 const appsList = document.getElementById("apps-list");
@@ -32,10 +31,13 @@ async function withBusy(action) {
   if (busy) return;
   busy = true;
   const spinner = document.getElementById("loading-spinner");
+  const errorMessage = document.getElementById("operation-error");
+  errorMessage.textContent = "";
   spinner?.classList.remove("hidden");
   try {
     await action();
   } catch (error) {
+    errorMessage.textContent = `${getTranslation("operation_error")} ${error.message}`;
     toast(`${getTranslation("operation_error")} ${error.message}`);
     try {
       await loadApps();
@@ -104,7 +106,8 @@ async function loadPersistedProfile() {
 
 function sortChecked() {
   [...appsList.children]
-    .sort((a, b) => (a.querySelector(".ns-toggle").checked ? -1 : 1))
+    .sort((a, b) => Number(b.querySelector(".ns-toggle").checked) - Number(a.querySelector(".ns-toggle").checked)
+      || a.dataset.key.localeCompare(b.dataset.key, undefined, { numeric: true }))
     .forEach((node) => appsList.appendChild(node));
 }
 
@@ -117,7 +120,7 @@ function updateStatus(node) {
   if (!app) return;
   const state = isolationState(app, snapshot);
   const blocked = state === "module_isolated" || state === "shared_isolation";
-  for (const selector of [".app-status", ".switch-label"]) {
+  for (const selector of [".app-status"]) {
     const el = node.querySelector(selector);
     el.removeAttribute("data-i18n");
     el.textContent = getTranslation(state);
@@ -130,21 +133,17 @@ function populateApp(app) {
   const el = frag.firstElementChild;
   el.dataset.key = app.key;
   el.dataset.user = app.user;
-  el.querySelector("p").textContent = app.packageName;
+  el.querySelector(".app-name").textContent = `${getTranslation("user_label", app.user)} · ${app.packageName}`;
   const checkbox = el.querySelector(".ns-toggle");
   checkbox.checked = snapshot.selected.has(app.key);
   checkbox.id = safeId("ns-toggle", app.key);
   checkbox.setAttribute("aria-label", `${getTranslation("isolate_instance")} ${app.user}: ${app.packageName}`);
   checkbox.disabled = app.uid === null && !checkbox.checked;
-  const details = document.createElement("p");
-  details.className = "mt-1 text-xs break-words text-gray-500 dark:text-gray-400";
-  details.textContent = `${getTranslation("android_user")} ${app.user}${app.uid ? ` · UID ${app.uid}` : ""}`;
-  el.appendChild(details);
   if (app.uid && needsUidConsent(app, snapshot)) {
     const warning = document.createElement("details");
     warning.className = "mt-1 text-xs text-amber-700 dark:text-amber-300";
     const summary = document.createElement("summary");
-    summary.textContent = getTranslation("shared_uid_scope");
+    summary.textContent = `UID ${app.uid} · ${getTranslation("shared_uid_scope")}`;
     const peers = document.createElement("p");
     peers.className = "break-words";
     peers.textContent = snapshot.peers.get(app.uid).map((peer) => `${peer.user}: ${peer.packageName}`).join(", ");
@@ -168,7 +167,7 @@ function populateApp(app) {
       await updateCurrentProfile();
     });
   });
-  if (app.uid !== null) {
+  if (app.uid !== null && snapshot.apps.some((item) => item.packageName === app.packageName && item.user !== app.user && item.uid !== null)) {
     const allUsers = document.createElement("button");
     allUsers.className = "mt-2 text-xs text-blue-600 dark:text-blue-400";
     allUsers.textContent = getTranslation("block_existing_users");
@@ -303,26 +302,6 @@ async function loadApps() {
 
 function renderApps() {
   isolateList = [...snapshot.selected];
-  const select = document.getElementById("android-user");
-  const previous = select.value || "0";
-  select.replaceChildren();
-  const all = document.createElement("option");
-  all.value = "all";
-  all.textContent = getTranslation("all_android_users");
-  select.appendChild(all);
-  const users = [...snapshot.users];
-  for (const app of snapshot.apps) {
-    if (!users.some((user) => user.id === app.user)) {
-      users.push({ id: app.user, name: getTranslation("missing_user"), state: "unknown" });
-    }
-  }
-  for (const user of users) {
-    const option = document.createElement("option");
-    option.value = user.id;
-    option.textContent = `${user.id}: ${user.name} · ${getTranslation(user.state === "running" ? "user_running" : "user_not_running")}`;
-    select.appendChild(option);
-  }
-  select.value = users.some((user) => user.id === previous) ? previous : "all";
   appsList.replaceChildren();
   for (const app of snapshot.apps) populateApp(app);
   document.getElementById("refresh-note").textContent = getTranslation(snapshot.needsRefresh ? "refresh_required" : "refresh_boundary");
@@ -363,17 +342,15 @@ async function connectAllApps() {
 }
 
 function filterApps() {
-  const user = document.getElementById("android-user").value;
   const query = document.getElementById("search").value.toLowerCase();
   for (const node of appsList.children) {
-    const matches = (user === "all" || node.dataset.user === user) && node.dataset.key.toLowerCase().includes(query);
+    const matches = node.querySelector(".app-name").textContent.toLowerCase().includes(query);
     node.style.display = matches ? "" : "none";
   }
 }
 
 function setupSearch() {
   document.getElementById("search")?.addEventListener("input", filterApps);
-  document.getElementById("android-user")?.addEventListener("change", filterApps);
   document.getElementById("refresh-rules")?.addEventListener("click", () => withBusy(async () => {
     await loadApps();
     if (!confirmUidScope(snapshot.apps.filter((app) => snapshot.selected.has(app.key)))) return;

@@ -44,6 +44,8 @@
   "select_language_desc_1": "选择您偏好的界面语言。",
   "select_language_desc_2": "应用会记住您的选择。",
   "android_user": "Android 用户／资料",
+  "user_label": "用户 {0}",
+  "delete_profile": "删除",
   "all_android_users": "所有 Android 用户／资料",
   "user_running": "正在运行",
   "user_not_running": "未运行／不可用",
