@@ -196,6 +196,36 @@ class BackendTest(unittest.TestCase):
         for family in ("iptables", "ip6tables"):
             self.assertEqual(self.load()[family], before[family])
 
+    def test_update_returns_actual_snapshot_without_requerying_packages(self):
+        result = self.run_cli("block", "--snapshot", "--user", "10", "com.example.work")
+        calls = self.load()["calls"]
+        self.assertEqual(sum(call[0] == "pm" for call in calls), 5)
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(sum(call == [family, "-w", "5", "-S"] for call in calls), 2)
+            self.assertIn(f"rule\t{family}\t1010456\n", result.stdout)
+        self.assertEqual(result.stdout, self.run_cli("snapshot").stdout)
+        result = self.run_cli("unblock", "--snapshot", "all")
+        self.assertIn("app\t0\tcom.example.alpha\t10123", result.stdout)
+        self.assertNotIn("selection\t", result.stdout)
+        self.assertNotIn("rule\t", result.stdout)
+
+    def test_snapshot_update_failure_keeps_previous_config(self):
+        self.mutate(lambda s: s.update(failures=[{"tool": "ip6tables", "args": ["-A"]}]))
+        result = self.run_cli("block", "--snapshot", "--user", "10", "com.example.work", code=1)
+        self.assertNotIn("rule\t", result.stdout)
+        self.assertEqual(self.config.read_text(), "[]")
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(self.uids(family), [])
+
+    def test_final_snapshot_failure_reports_committed_update(self):
+        self.mutate(lambda s: s.update(failures=[{"tool": "ip6tables", "args": ["-S"], "skip": 1}]))
+        result = self.run_cli("block", "--snapshot", "--user", "10", "com.example.work", code=1)
+        self.assertIn("Rules updated, but final rule state is unavailable", result.stderr)
+        self.assertNotIn("rule\t", result.stdout)
+        self.assertEqual(json.loads(self.config.read_text()), ["10:com.example.work"])
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(self.uids(family), [1010456])
+
     def test_default_and_scoped_instances(self):
         self.run_cli("block", "--user", "10", "com.example.alpha")
         self.assertEqual(self.uids(), [1010123])

@@ -20,6 +20,9 @@ def finish(code=0, output=""):
 
 for failure in state.get("failures", []):
     if failure["tool"] == tool and all(word in args for word in failure["args"]):
+        if failure.get("skip", 0):
+            failure["skip"] -= 1
+            continue
         if failure.get("remaining", 1):
             if failure.get("remaining", 1) > 0:
                 failure["remaining"] = failure.get("remaining", 1) - 1

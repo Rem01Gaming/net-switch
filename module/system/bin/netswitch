@@ -28,6 +28,7 @@ Usage: netswitch COMMAND [OPTIONS] [PACKAGES...]
   clear                       Remove module rules, retain saved selections
 
 The default user is 0. --all-users selects currently installed instances only.
+block, unblock, apply and replace accept --snapshot for the WebUI.
 Shared/system UIDs affect all traffic owned by that UID, including services
 not represented by package names. Review the reported scope before opting in.
 EOF
@@ -147,11 +148,11 @@ reconcile() (
     if [ "$exists" = 0 ] && [ "$target_exists" = 1 ]; then
         "$tool" -w 5 -N "$CHAIN" || exit 1
     fi
+    awk 'FILENAME==ARGV[1] { present[$1]=1; next }
+         !($1 in present) { print $1 }' "$current.uids" "$wanted" > "$current.add" || exit 1
     while IFS= read -r uid; do
-        if ! grep -qx "$uid" "$current.uids"; then
-            "$tool" -w 5 -A "$CHAIN" -m owner --uid-owner "$uid" -j REJECT || exit 1
-        fi
-    done < "$wanted"
+        "$tool" -w 5 -A "$CHAIN" -m owner --uid-owner "$uid" -j REJECT || exit 1
+    done < "$current.add"
     while [ "$hooks" -lt "$target_hooks" ]; do
         "$tool" -w 5 -I OUTPUT 1 -m comment --comment net-switch -j "$CHAIN" || exit 1
         hooks=$((hooks + 1))
@@ -272,6 +273,7 @@ command=${1:-help}
 case "$command" in help|--help|-h) usage; exit 0;; esac
 case "$command" in block|unblock|apply|migrate|snapshot|list|replace|clear) ;; *) usage; exit 1;; esac
 allow_shared=0
+return_snapshot=0
 user=0
 scope_set=0
 while [ "$#" -gt 0 ]; do
@@ -285,6 +287,7 @@ while [ "$#" -gt 0 ]; do
             [ "$scope_set" = 0 ] || die "Choose one user scope"
             user=all; scope_set=1; shift;;
         --allow-shared-uid) allow_shared=1; shift;;
+        --snapshot) return_snapshot=1; shift;;
         --*) die "Unknown option: $1";;
         *) break;;
     esac
@@ -294,6 +297,9 @@ case "$command" in
     replace) [ "$#" = 1 ] && [ "$scope_set" = 0 ] || die "Specify one JSON array";;
     *) [ "$#" = 0 ] && [ "$scope_set" = 0 ] || die "Unexpected arguments";;
 esac
+if [ "$return_snapshot" = 1 ]; then
+    case "$command" in block|unblock|apply|replace) ;; *) die "--snapshot requires a rule update";; esac
+fi
 
 mkdir -p "$CONFIG_DIR" || die "Cannot create config directory"
 mkdir "$LOCK" 2>/dev/null || die "Backend busy (or stale lock: $LOCK). Do not remove a live process lock."
@@ -393,4 +399,16 @@ if [ "$command" != clear ]; then
     mv -f "$CONFIG_DIR/.isolated.next" "$CONFIG" || exit 1
 fi
 transaction=0
-echo "Net Switch rules updated for IPv4 and IPv6."
+if [ "$return_snapshot" = 1 ]; then
+    # Reuse the inventory resolved for this update; read the actual rules again
+    # rather than making the WebUI repeat every PackageManager query.
+    if [ "$emergency" = 1 ]; then
+        inventory || die "Rules updated, but package state is unavailable"
+    fi
+    cp "$LOCK/next" "$LOCK/old" || exit 1
+    capture iptables "$LOCK/old-iptables" && capture ip6tables "$LOCK/old-ip6tables" ||
+        die "Rules updated, but final rule state is unavailable"
+    snapshot
+else
+    echo "Net Switch rules updated for IPv4 and IPv6."
+fi

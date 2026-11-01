@@ -110,6 +110,11 @@ matches package names exactly. Apart from the one-time legacy migration above,
 opening the WebUI reads state without reapplying rules or a saved profile.
 No polling service or package/user event listener is installed.
 
+WebUI updates request a verified snapshot in the same backend call, reusing that
+update's package inventory. Unchanged app rows are retained and the clicked row
+shows a pending state until completion. There is no persistent UID cache: each
+update still queries current installations and checks both address families.
+
 After installing/uninstalling apps or changing Android users, use **Refresh
 rules** or `netswitch apply`. A refresh removes stale UID rules and resolves
 reinstalled packages again. Missing packages/users retain their saved selections
@@ -129,10 +134,12 @@ there is no continuous retry or guarantee of coverage before the next refresh.
 Rules live in the reserved `NETSWITCH` filter chain with a tagged OUTPUT jump.
 Updates add missing rules before deleting obsolete rules and do not flush OUTPUT
 or touch other firewalls. A directory lock serializes writers. IPv4 and IPv6 are
-not an atomic transaction: on failure the backend attempts to restore both
+not an atomic transaction: on failure before committing the configuration, the backend attempts to restore both
 previous UID sets and leaves the saved configuration unchanged. A failed rollback
 returns exit code 2 and reports incomplete state; inspect `netswitch list` and
-retry `apply` or `clear`. Forced termination/power loss can interrupt an update.
+retry `apply` or `clear`. If the final status query fails after a successful commit,
+the error explicitly says the rules were updated; the WebUI retries reading state.
+Forced termination/power loss can interrupt an update.
 A lock left by SIGKILL must only be removed after verifying no backend process is
 running; the default lock `/dev/.net-switch-lock` is cleared by reboot.
 

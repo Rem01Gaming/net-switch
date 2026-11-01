@@ -54,6 +54,7 @@
   "isolate_instance": "Isolate app in user",
   "block_existing_users": "Isolate in all existing users",
   "refresh_rules": "Refresh rules",
+  "updating_rules": "Updating rules…",
   "rule_state_unavailable": "Cannot read current rule state. Refresh to retry; use netswitch clear to remove module rules if package queries remain unavailable.",
   "refresh_boundary": "Rules refresh at boot, on changes here, or manually. After installing apps or changing users, refresh again. Status describes Net Switch rules only.",
   "refresh_required": "Saved selections and current IPv4/IPv6 rules differ. Refresh rules to reconcile. Other firewalls and legacy rules are not included.",

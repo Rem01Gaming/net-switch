@@ -16,6 +16,7 @@ let snapshot = null;
 let busy = false;
 let isolateList = [];
 let acknowledgedMigration = "";
+let renderedApps = [];
 
 async function run(cmd) {
   const { errno, stdout, stderr } = await exec(cmd);
@@ -26,6 +27,12 @@ async function run(cmd) {
 
 async function backend(...args) {
   return run(`sh ${shellQuote(backendPath)} ${args.map(shellQuote).join(" ")}`);
+}
+
+async function updateRules(command, ...args) {
+  snapshot = parseSnapshot(await backend(command, "--snapshot", ...args));
+  renderApps();
+  showMigrationNotice();
 }
 
 async function withBusy(action) {
@@ -116,9 +123,7 @@ function safeId(prefix, name) {
   return `${prefix}-${name.replace(/[^a-z0-9]/gi, "-")}`;
 }
 
-function updateStatus(node) {
-  const app = snapshot.apps.find((item) => item.key === node.dataset.key);
-  if (!app) return;
+function updateStatus(node, app) {
   const state = isolationState(app, snapshot);
   const blocked = state === "module_isolated" || state === "shared_isolation";
   for (const selector of [".app-status"]) {
@@ -156,15 +161,22 @@ function populateApp(app) {
     }
     el.appendChild(warning);
   }
-  updateStatus(el);
+  updateStatus(el, app);
   checkbox.addEventListener("change", () => {
     const block = checkbox.checked;
     checkbox.checked = snapshot.selected.has(app.key);
     return withBusy(async () => {
       if (block && !confirmUidScope([app])) return;
-      await backend(block ? "block" : "unblock", "--user", app.user,
-        ...(block && needsUidConsent(app, snapshot) ? ["--allow-shared-uid"] : []), app.packageName);
-      await loadApps();
+      checkbox.disabled = true;
+      el.querySelector(".app-status").textContent = getTranslation("updating_rules");
+      el.setAttribute("aria-busy", "true");
+      try {
+        await updateRules(block ? "block" : "unblock", "--user", app.user,
+          ...(block && needsUidConsent(app, snapshot) ? ["--allow-shared-uid"] : []), app.packageName);
+      } finally {
+        checkbox.disabled = false;
+        el.removeAttribute("aria-busy");
+      }
       await updateCurrentProfile();
     });
   });
@@ -175,9 +187,8 @@ function populateApp(app) {
     allUsers.addEventListener("click", () => withBusy(async () => {
       const instances = snapshot.apps.filter((item) => item.packageName === app.packageName && item.uid !== null);
       if (!confirmUidScope(instances)) return;
-      await backend("block", "--all-users",
+      await updateRules("block", "--all-users",
         ...(instances.some((item) => needsUidConsent(item, snapshot)) ? ["--allow-shared-uid"] : []), app.packageName);
-      await loadApps();
       await updateCurrentProfile();
     }));
     el.appendChild(allUsers);
@@ -242,10 +253,9 @@ async function loadProfile(profileName) {
     updateProfileSelect();
     return;
   }
-  await backend("replace", ...(instances.some((app) => needsUidConsent(app, snapshot)) ? ["--allow-shared-uid"] : []), JSON.stringify(entries));
+  await updateRules("replace", ...(instances.some((app) => needsUidConsent(app, snapshot)) ? ["--allow-shared-uid"] : []), JSON.stringify(entries));
   currentProfile = profileName;
   await persistDefaultKey("currentProfile", currentProfile);
-  await loadApps();
   updateProfileSelect();
 }
 
@@ -324,10 +334,23 @@ function showMigrationNotice() {
   if (!dialog.open) dialog.showModal();
 }
 
-function renderApps() {
+function renderApps(force = false) {
   isolateList = [...snapshot.selected];
-  appsList.replaceChildren();
-  for (const app of snapshot.apps) populateApp(app);
+  const unchanged = !force && appsList.children.length === snapshot.apps.length
+    && renderedApps.length === snapshot.apps.length
+    && snapshot.apps.every((app, i) => app.key === renderedApps[i].key && app.uid === renderedApps[i].uid);
+  if (unchanged) {
+    const apps = new Map(snapshot.apps.map((app) => [app.key, app]));
+    for (const node of appsList.children) {
+      const app = apps.get(node.dataset.key);
+      node.querySelector(".ns-toggle").checked = snapshot.selected.has(app.key);
+      updateStatus(node, app);
+    }
+  } else {
+    appsList.replaceChildren();
+    for (const app of snapshot.apps) populateApp(app);
+  }
+  renderedApps = snapshot.apps;
   document.getElementById("refresh-note").textContent = getTranslation(snapshot.needsRefresh ? "refresh_required" : "refresh_boundary");
   sortChecked();
   filterApps();
@@ -358,10 +381,9 @@ async function createProfile() {
 }
 
 async function connectAllApps() {
-  await backend("unblock", "all");
+  await updateRules("unblock", "all");
   currentProfile = "";
   await persistDefaultKey("currentProfile", "");
-  await loadApps();
   updateProfileSelect();
 }
 
@@ -378,14 +400,13 @@ function setupSearch() {
   document.getElementById("refresh-rules")?.addEventListener("click", () => withBusy(async () => {
     await loadApps();
     if (!confirmUidScope(snapshot.apps.filter((app) => snapshot.selected.has(app.key)))) return;
-    await backend("apply");
-    await loadApps();
+    await updateRules("apply");
   }));
 }
 
 window.addEventListener("languagechange", () => {
   if (snapshot) {
-    renderApps();
+    renderApps(true);
     showMigrationNotice();
   }
 });
