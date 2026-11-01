@@ -63,8 +63,17 @@ write_config() {
          END { print "]" }' "$1" > "$2"
 }
 
+# Android passes shell command descriptors to system_server. Do not pass files
+# in our private /dev lock directory, including the user-list loop's stdin.
+query_pm() {
+    query_output=$(pm "$@" </dev/null 2>&1)
+    query_result=$?
+    printf '%s\n' "$query_output"
+    return "$query_result"
+}
+
 inventory() (
-    pm list users > "$LOCK/users.raw" || { error "Cannot enumerate Android users"; return 1; }
+    query_pm list users > "$LOCK/users.raw" || { error "Cannot enumerate Android users"; return 1; }
     awk '
     /^[ \t]*Users:[ \t]*$/ { next }
     /^[ \t]*UserInfo\{[0-9]+:.*:[0-9a-fA-F]+\}([ \t]+running)?[ \t]*$/ {
@@ -82,7 +91,7 @@ inventory() (
     }
     : > "$LOCK/apps"
     while IFS="$(printf '\t')" read -r user name state; do
-        pm list packages -U --user "$user" > "$LOCK/packages.raw" 2> "$LOCK/packages.err" || {
+        query_pm list packages -U --user "$user" > "$LOCK/packages.raw" 2> "$LOCK/packages.err" || {
             error "Cannot query packages for user $user; rules unchanged"; return 1;
         }
         # Some Android versions print an error but still return success.

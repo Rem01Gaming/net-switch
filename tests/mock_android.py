@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 
 path = Path(os.environ["NETSWITCH_TEST_STATE"])
@@ -25,6 +26,10 @@ for failure in state.get("failures", []):
             finish(1, "synthetic command failure")
 
 if tool == "pm":
+    if state.get("reject_file_descriptors") and any(
+        stat.S_ISREG(os.fstat(fd).st_mode) for fd in (0, 1, 2)
+    ):
+        finish(1, "cmd: Failure calling service package: Failed transaction")
     if args == ["list", "users"]:
         finish(output=state.get("users_output", "Users:\n" + "\n".join(
             "\tUserInfo{%s:%s:%s}%s" % (u["id"], u["name"], u["flags"],

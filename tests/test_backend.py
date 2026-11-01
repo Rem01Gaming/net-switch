@@ -98,11 +98,19 @@ class BackendTest(unittest.TestCase):
     def test_default_and_scoped_instances(self):
         self.run_cli("block", "--user", "10", "com.example.alpha")
         self.assertEqual(self.uids(), [1010123])
+
         self.assertEqual(json.loads(self.config.read_text()), ["10:com.example.alpha"])
         self.run_cli("block", "--allow-shared-uid", "com.example.alpha")
         self.assertEqual(set(self.uids()), {10123, 1010123})
         self.run_cli("unblock", "--user", "10", "com.example.alpha")
         self.assertEqual(self.uids(), [10123])
+
+    def test_android_pm_does_not_receive_private_file_descriptors(self):
+        self.mutate(lambda state: state.update(reject_file_descriptors=True))
+        result = self.run_cli("snapshot")
+        self.assertIn("app\t10\tcom.example.alpha\t1010123", result.stdout)
+        self.run_cli("block", "--user", "12", "com.example.alpha")
+        self.assertEqual(self.uids(), [1210123])
 
     def test_all_users_including_stopped_and_partial_install(self):
         self.run_cli("block", "--all-users", "--allow-shared-uid", "com.example.alpha", "com.example.work")
