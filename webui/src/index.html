@@ -126,6 +126,16 @@
             </div>
         </div>
 
+        <!-- Android users are separate from saved isolation profiles. -->
+        <div class="mx-3 mt-4 rounded-xl border border-gray-200 bg-white p-4 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+            <label for="android-user" data-i18n="android_user" class="block mb-2 text-sm font-semibold">Android user / profile</label>
+            <div class="flex items-center gap-2">
+                <select id="android-user" class="min-w-0 flex-1 rounded-lg border p-2 text-sm dark:border-gray-600 dark:bg-gray-800"></select>
+                <button id="refresh-rules" data-i18n="refresh_rules" class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">Refresh rules</button>
+            </div>
+            <p id="refresh-note" aria-live="polite" class="mt-2 text-xs text-gray-500 dark:text-gray-400"></p>
+        </div>
+
         <!-- Search Section -->
         <div
             class="mx-3 mt-4 rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">

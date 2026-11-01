@@ -30,13 +30,8 @@ const translationModules = import.meta.glob(
 // Synchronous translation lookup
 // This function also will parse args from it's input
 function getTranslationSync(key, ...args) {
-  if (!currentTranslations) {
-    console.error("Translations not loaded!");
-    return key;
-  }
-
   const keys = key.split(".");
-  let value = currentTranslations;
+  let value = currentTranslations || cachedEnglishTranslations;
 
   // Try current language
   for (const k of keys) {
@@ -99,6 +94,11 @@ function applyTranslations(translations) {
     for (const key of keys) {
       value = value?.[key];
       if (value === undefined) break;
+    }
+
+    if (value === undefined) {
+      value = cachedEnglishTranslations;
+      for (const key of keys) value = value?.[key];
     }
 
     if (value !== undefined) {
@@ -168,6 +168,8 @@ function applyTranslations(translations) {
       if (el.tagName === "BUTTON") el.textContent = value;
     }
   });
+  // Modified: refresh per-user status labels when the language changes.
+  window.dispatchEvent(new Event("languagechange"));
 }
 
 async function initI18n() {
