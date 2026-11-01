@@ -59,7 +59,7 @@ parse_config() {
 }
 
 write_config() {
-    awk 'BEGIN { printf "[" } { printf "%s\"%s\"", NR==1 ? "" : ",", $0 }
+    awk 'BEGIN { printf "[" } { printf "%s\"%s\"", (NR==1 ? "" : ","), $0 }
          END { print "]" }' "$1" > "$2"
 }
 
@@ -317,8 +317,8 @@ case "$command" in
                 user=0; package=key
                 if (index(key,":")) { split(key,p,":"); user=p[1]; package=p[2] }
                 if (key in uid) printf "- user %s: %s (UID %s; IPv4 %s, IPv6 %s)\n",
-                    user, package, uid[key], rules["iptables",uid[key]] ? "blocked" : "not applied",
-                    rules["ip6tables",uid[key]] ? "blocked" : "not applied"
+                    user, package, uid[key], (rules["iptables",uid[key]] ? "blocked" : "not applied"),
+                    (rules["ip6tables",uid[key]] ? "blocked" : "not applied")
                 else printf "- user %s: %s (not installed / user unavailable; selection retained)\n", user, package
                 count++
             }
