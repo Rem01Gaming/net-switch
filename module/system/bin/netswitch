@@ -6,8 +6,11 @@ export LC_ALL=C
 CONFIG_DIR=${NETSWITCH_CONFIG_DIR:-/data/adb/.config/net-switch}
 LOCK=${NETSWITCH_LOCK_DIR:-/dev/.net-switch-lock}
 CONFIG=$CONFIG_DIR/isolated.json
+LEGACY_CONFIG=${NETSWITCH_LEGACY_CONFIG:-/data/adb/net-switch/isolated.json}
+MIGRATION_REPORT=$CONFIG_DIR/migration.tsv
 CHAIN=NETSWITCH
 transaction=0
+migration_report_committed=0
 
 error() { echo "net-switch: $*" >&2; }
 die() { error "$*"; exit 1; }
@@ -19,6 +22,7 @@ Usage: netswitch COMMAND [OPTIONS] [PACKAGES...]
   unblock all                 Remove all selections and module rules
   list                        Show selections, UID peers and actual rule state
   apply                       Refresh installed UIDs and reconcile module rules
+  migrate                     Import eligible legacy selections for user 0 once
   snapshot                    Tab-separated inventory, selections and rule state
   replace [--allow-shared-uid] JSON_ARRAY  Apply a complete profile
   clear                       Remove module rules, retain saved selections
@@ -187,8 +191,9 @@ finish() {
     if [ "$transaction" = 1 ]; then
         error "Update failed; restoring previous module rules"
         rollback || result=2
+        [ "$migration_report_committed" = 0 ] || rm -f "$MIGRATION_REPORT"
     fi
-    rm -f "$CONFIG_DIR/.isolated.next" "$LOCK"/*
+    rm -f "$CONFIG_DIR/.isolated.next" "$CONFIG_DIR/.migration.next" "$LOCK"/*
     rmdir "$LOCK"
     exit "$result"
 }
@@ -222,10 +227,38 @@ report_shared() {
     }' "$LOCK/old" "$LOCK/next" "$LOCK/apps"
 }
 
+prepare_migration() {
+    parse_config "$LEGACY_CONFIG" > "$LOCK/legacy" || die "Invalid legacy configuration; unchanged"
+    : > "$LOCK/next"
+    : > "$LOCK/migration"
+    # v1.2 rules targeted user 0. Do not infer another user from the foreground
+    # session, retain missing packages, or implicitly consent to shared UIDs.
+    awk -F '\t' -v next_config="$LOCK/next" -v report="$LOCK/migration" '
+    FILENAME==ARGV[1] { packages[++n]=$0; next }
+    { peers[$3]++; if ($1==0) uid[$2]=$3 }
+    END {
+        for (i=1; i<=n; i++) {
+            package=packages[i]; owner=""; reason="imported"
+            if (index(package, ":")) reason="scope"
+            else if (!(package in uid)) reason="missing"
+            else {
+                owner=uid[package]
+                if (owner%100000<10000) reason="system"
+                else if (peers[owner]>1) reason="shared"
+            }
+            if (reason=="imported") print package > next_config
+            printf "migration\t%s\t%s\t%s\n", reason, package, (owner=="" ? "-" : owner) > report
+        }
+    }' "$LOCK/legacy" "$LOCK/apps" || exit 1
+    [ ! -d "$MIGRATION_REPORT" ] || die "Cannot save migration report"
+    cp "$LOCK/migration" "$CONFIG_DIR/.migration.next" || exit 1
+}
+
 snapshot() {
     awk -F '\t' '{ print "user\t" $0 }' "$LOCK/users"
     awk '{ print "selection\t" $0 }' "$LOCK/old"
     awk -F '\t' '{ print "app\t" $0 }' "$LOCK/apps"
+    if [ -f "$MIGRATION_REPORT" ]; then cat "$MIGRATION_REPORT"; fi
     for family in iptables ip6tables; do
         read -r exists hooks < "$LOCK/old-$family.meta"
         if [ "$hooks" -gt 0 ]; then
@@ -237,7 +270,7 @@ snapshot() {
 command=${1:-help}
 [ "$#" = 0 ] || shift
 case "$command" in help|--help|-h) usage; exit 0;; esac
-case "$command" in block|unblock|apply|snapshot|list|replace|clear) ;; *) usage; exit 1;; esac
+case "$command" in block|unblock|apply|migrate|snapshot|list|replace|clear) ;; *) usage; exit 1;; esac
 allow_shared=0
 user=0
 scope_set=0
@@ -267,6 +300,15 @@ mkdir "$LOCK" 2>/dev/null || die "Backend busy (or stale lock: $LOCK). Do not re
 trap finish EXIT
 trap 'exit 1' HUP INT TERM
 printf '%s\n' "$$" > "$LOCK/pid"
+# The installer creates a zero-byte file for a fresh configuration. A saved []
+# is an explicit empty selection and must never resurrect the old block list.
+legacy_pending=0
+if [ ! -s "$CONFIG" ] && [ -s "$LEGACY_CONFIG" ]; then legacy_pending=1; fi
+if [ "$command" = apply ] && [ "$legacy_pending" = 1 ]; then command=migrate; fi
+if [ "$command" = migrate ] && [ "$legacy_pending" = 0 ]; then
+    echo "Existing configuration retained; no legacy migration needed."
+    exit 0
+fi
 emergency=0
 [ "$command" = clear ] && emergency=1
 if [ "$command" = unblock ] && [ "$#" = 1 ] && [ "$1" = all ] && [ "$scope_set" = 0 ]; then emergency=1; fi
@@ -281,6 +323,7 @@ cp "$LOCK/old" "$LOCK/next" || exit 1
 if [ "$emergency" = 0 ]; then
     inventory || exit 1
     case "$command" in
+        migrate) prepare_migration;;
         block|unblock)
             : > "$LOCK/targets"
             for package in "$@"; do
@@ -342,6 +385,10 @@ transaction=1
 if [ "$emergency" = 1 ]; then target=0; else target=1; fi
 reconcile iptables "$LOCK/wanted" "$LOCK/old-iptables" "$target" "$target" || exit 1
 reconcile ip6tables "$LOCK/wanted" "$LOCK/old-ip6tables" "$target" "$target" || exit 1
+if [ "$command" = migrate ]; then
+    mv -f "$CONFIG_DIR/.migration.next" "$MIGRATION_REPORT" || exit 1
+    migration_report_committed=1
+fi
 if [ "$command" != clear ]; then
     mv -f "$CONFIG_DIR/.isolated.next" "$CONFIG" || exit 1
 fi

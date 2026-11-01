@@ -30,6 +30,7 @@ export function parseSnapshot(text) {
   const users = [];
   const apps = [];
   const selections = [];
+  const migration = [];
   const rules = { iptables: new Set(), ip6tables: new Set() };
   for (const line of text.trim().split("\n").filter(Boolean)) {
     const [kind, ...fields] = line.split("\t");
@@ -38,6 +39,13 @@ export function parseSnapshot(text) {
     else if (kind === "app") {
       const [user, packageName, uid] = fields;
       apps.push({ user, packageName, uid, key: selectionKey(user, packageName) });
+    } else if (kind === "migration") {
+      const [reason, packageName, uid] = fields;
+      if (fields.length !== 3 || !["imported", "missing", "scope", "system", "shared"].includes(reason)
+        || !/^(?:\d+:)?[A-Za-z_][A-Za-z0-9_.]*$/.test(packageName) || !/^(\d+|-)$/.test(uid)) {
+        throw new Error("Invalid migration report");
+      }
+      migration.push({ reason, packageName, uid });
     } else if (kind === "rule" && rules[fields[0]]) rules[fields[0]].add(fields[1]);
     else throw new Error("Invalid backend response");
   }
@@ -58,7 +66,7 @@ export function parseSnapshot(text) {
   const needsRefresh = Object.values(rules).some((actual) =>
     actual.size !== desired.size || [...desired].some((uid) => !actual.has(uid)),
   );
-  return { users, apps, selected, peers, rules, needsRefresh };
+  return { users, apps, selected, peers, rules, needsRefresh, migration };
 }
 
 export function isolationState(app, snapshot) {

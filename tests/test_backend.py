@@ -52,6 +52,7 @@ class BackendTest(unittest.TestCase):
         self.config_dir.mkdir()
         self.config = self.config_dir / "isolated.json"
         self.config.write_text("[]", encoding="utf-8")
+        self.legacy = self.root / "legacy.json"
         self.state_path = self.root / "state.json"
         self.save(fixture())
         bin_dir = self.root / "bin"
@@ -63,6 +64,7 @@ class BackendTest(unittest.TestCase):
             wrapper.chmod(0o755)
         self.env = dict(os.environ, NETSWITCH_CONFIG_DIR=self.config_dir.as_posix(),
                         NETSWITCH_LOCK_DIR=(self.root / "lock").as_posix(),
+                        NETSWITCH_LEGACY_CONFIG=self.legacy.as_posix(),
                         NETSWITCH_TEST_STATE=self.state_path.as_posix(),
                         PATH=str(bin_dir) + os.pathsep + os.environ["PATH"])
 
@@ -94,6 +96,105 @@ class BackendTest(unittest.TestCase):
         state = self.load()
         callback(state)
         self.save(state)
+
+    def prepare_legacy(self, entries):
+        self.legacy.write_text(json.dumps(entries), encoding="utf-8")
+        self.config.write_bytes(b"")
+
+    def test_legacy_migration_filters_scope_and_shared_uids(self):
+        self.prepare_legacy(["com.example.alpha.overlay", "com.example.alpha",
+                             "com.example.system", "com.example.missing",
+                             "com.example.work", "12:com.example.alpha"])
+        before = self.legacy.read_bytes()
+        self.mutate(lambda s: s["packages"]["12"].update({"com.example.alpha.overlay": 1210444}))
+        self.run_cli("apply")  # Boot uses this entry point.
+        self.assertEqual(json.loads(self.config.read_text()), ["com.example.alpha.overlay"])
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(self.uids(family), [10444])
+            self.assertEqual(self.load()[family]["OTHER_FIREWALL"], fixture()[family]["OTHER_FIREWALL"])
+            for rule in fixture()[family]["OUTPUT"]:
+                self.assertIn(rule, self.load()[family]["OUTPUT"])
+        report = self.run_cli("snapshot").stdout
+        for reason, package, uid in (("imported", "alpha.overlay", "10444"),
+                                     ("shared", "alpha", "10123"),
+                                     ("system", "system", "1000"),
+                                     ("missing", "missing", "-"), ("missing", "work", "-")):
+            self.assertIn(f"migration\t{reason}\tcom.example.{package}\t{uid}\n", report)
+        self.assertIn("migration\tscope\t12:com.example.alpha\t-\n", report)
+        self.assertEqual(self.legacy.read_bytes(), before)
+        self.run_cli("unblock", "all")
+        self.run_cli("migrate")
+        self.run_cli("apply")
+        self.assertEqual(json.loads(self.config.read_text()), [])
+        self.assertEqual(self.uids(), [])
+
+    def test_migration_preserves_existing_configs_without_queries(self):
+        self.legacy.write_text('["com.example.alpha.overlay"]')
+        for data in ("[]", '["10:com.example.work"]', '["com.example.system"]'):
+            self.config.write_text(data)
+            self.run_cli("migrate")
+            self.assertEqual(self.config.read_text(), data)
+        self.assertEqual(self.load().get("calls", []), [])
+        self.assertFalse((self.config_dir / "migration.tsv").exists())
+
+    def test_migration_with_missing_new_config_and_no_eligible_entries(self):
+        self.prepare_legacy(["com.example.system", "com.example.alpha"])
+        self.config.unlink()
+        self.run_cli("migrate")
+        self.assertEqual(json.loads(self.config.read_text()), [])
+        self.assertEqual(self.uids(), [])
+        self.assertEqual(len((self.config_dir / "migration.tsv").read_text().splitlines()), 2)
+
+    def test_migration_query_or_parse_failure_can_be_retried(self):
+        self.prepare_legacy(["com.example.alpha.overlay"])
+        before = self.load()
+        self.mutate(lambda s: s.update(failures=[{"tool": "pm", "args": ["packages", "12"]}]))
+        self.run_cli("migrate", code=1)
+        self.legacy.write_text('["com.example.alpha.overlay",]')
+        self.run_cli("migrate", code=1)
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(self.load()[family], before[family])
+        self.assertEqual(self.config.read_bytes(), b"")
+        self.assertFalse((self.config_dir / "migration.tsv").exists())
+        self.legacy.write_text('["com.example.alpha.overlay"]')
+        self.run_cli("migrate")
+        self.assertEqual(self.uids(), [10444])
+
+    def test_migration_ipv6_failure_rolls_back_and_retries(self):
+        self.prepare_legacy(["com.example.alpha.overlay"])
+        before = self.load()
+        self.mutate(lambda s: s.update(failures=[{"tool": "ip6tables", "args": ["-A"]}]))
+        self.run_cli("migrate", code=1)
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(self.load()[family], before[family])
+        self.assertEqual(self.config.read_bytes(), b"")
+        self.assertFalse((self.config_dir / "migration.tsv").exists())
+        self.run_cli("migrate")
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(self.uids(family), [10444])
+
+    def test_migration_commit_failure_removes_report_and_restores_rules(self):
+        self.prepare_legacy(["com.example.alpha.overlay"])
+        before = self.load()
+        # Allow the report commit, then fail the configuration commit.
+        wrapper = self.root / "bin/mv"
+        wrapper.write_text('#!/bin/sh\ncase "$2" in *.isolated.next) exit 1;; esac\n'
+                           'exec /usr/bin/mv "$@"\n', encoding="utf-8")
+        wrapper.chmod(0o755)
+        self.run_cli("migrate", code=1)
+        self.assertFalse((self.config_dir / "migration.tsv").exists())
+        self.assertEqual(self.config.read_bytes(), b"")
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(self.load()[family], before[family])
+
+    def test_migration_report_failure_leaves_rules_unchanged(self):
+        self.prepare_legacy(["com.example.alpha.overlay"])
+        (self.config_dir / "migration.tsv").mkdir()
+        before = self.load()
+        self.run_cli("migrate", code=1)
+        self.assertEqual(self.config.read_bytes(), b"")
+        for family in ("iptables", "ip6tables"):
+            self.assertEqual(self.load()[family], before[family])
 
     def test_default_and_scoped_instances(self):
         self.run_cli("block", "--user", "10", "com.example.alpha")

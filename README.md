@@ -80,13 +80,35 @@ of shared/system UIDs. System UIDs (especially appId 1000) can also own services
 not represented by the listed packages. Removing one selection keeps the UID
 blocked while another selection still needs it.
 
+### Upgrading from v1.2
+
+If the new configuration is missing or zero bytes, the first boot-time `apply`
+or WebUI opening imports `/data/adb/net-switch/isolated.json`. You can also run
+`netswitch migrate`. The old file is kept unchanged. Migration targets **user 0**,
+matching v1.2 behavior, not whichever user happens to be in the foreground.
+It imports only exactly matched, installed packages with a non-system UID
+(appId >= 10000) that is not shared by another installed package. System/shared
+UIDs, missing packages and entries for other users are skipped for manual review.
+This limits the affected scope; it does not guarantee that blocking an ordinary
+app has no side effects. Other users and future installations are not selected.
+
+An existing nonempty v1.3 configuration, including `[]`, is never overwritten by
+migration. Failed queries or rule updates leave it unchanged and allow retry;
+IPv4/IPv6 rollback limitations below still apply. A report is saved alongside the
+new configuration as `migration.tsv` and included in `netswitch snapshot`.
+The WebUI shows imported/skipped counts and skip reasons until **Understood** is
+clicked. Acknowledgment is local to that WebView; clearing its storage or using
+another manager may show the report again. It is an import report, not live rule
+status. Review skipped entries before explicitly selecting them.
+
 ### Refresh and failure handling
 
 WebUI changes, profile application, CLI changes and the boot service use the same
 `netswitch` backend. It enumerates users with `pm list users`, queries installed
 packages and their actual full UIDs using `pm list packages -U --user ID`, and
-matches package names exactly. Opening the WebUI reads state without reapplying a
-saved profile. No polling service or package/user event listener is installed.
+matches package names exactly. Apart from the one-time legacy migration above,
+opening the WebUI reads state without reapplying rules or a saved profile.
+No polling service or package/user event listener is installed.
 
 After installing/uninstalling apps or changing Android users, use **Refresh
 rules** or `netswitch apply`. A refresh removes stale UID rules and resolves

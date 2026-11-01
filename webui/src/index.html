@@ -72,6 +72,14 @@
       <button id="io-back-btn" data-i18n="back_button">Back</button>
     </div>
   </div>
+  <dialog id="migration-dialog" aria-labelledby="migration-title" class="max-w-lg w-11/12 max-h-[80vh] overflow-y-auto rounded border p-4 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+    <h2 id="migration-title" data-i18n="migration_title" class="font-bold">Legacy configuration imported</h2>
+    <p id="migration-summary" class="my-3"></p>
+    <p data-i18n="migration_boundary" class="my-3 text-sm">Only user 0 selections were inherited. Other users and profiles were not selected. System and shared UIDs were skipped; review them manually. An ordinary UID can still affect app functionality.</p>
+    <p data-i18n="migration_backup" class="my-3 text-sm">The original v1.2 file was kept. This report describes the import, not the current rule state. Reboot after upgrading to remove old untagged rules.</p>
+    <p id="migration-skipped" class="whitespace-pre-wrap break-all text-sm"></p>
+    <button id="migration-dismiss" data-i18n="migration_dismiss" class="mt-4 text-blue-600 dark:text-blue-400">Understood</button>
+  </dialog>
   <dialog id="language_modal" class="rounded border p-4 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
     <h2 data-i18n="select_language">Select Language</h2>
     <div id="language_selection" class="flex flex-col gap-2 my-3"></div>

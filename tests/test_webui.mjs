@@ -59,10 +59,23 @@ test("stale and pending rules are visible without applying rules on open", () =>
   assert.doesNotMatch(persisted, /loadProfile\(/);
 });
 
+test("migration report preserves skipped reasons without selecting skipped entries", () => {
+  const snapshot = parseSnapshot(data + "\nmigration\tshared\tcom.example.peer\t10123\nmigration\tmissing\tcom.example.absent\t-");
+  assert.deepEqual(snapshot.migration, [
+    {reason: "shared", packageName: "com.example.peer", uid: "10123"},
+    {reason: "missing", packageName: "com.example.absent", uid: "-"},
+  ]);
+  assert.equal(snapshot.selected.has("com.example.peer"), false);
+  assert.equal(snapshot.selected.has("com.example.absent"), false);
+  assert.throws(() => parseSnapshot("migration\tunknown\tcom.example.app\t10000"));
+  assert.throws(() => parseSnapshot("migration\tshared\t<script>\t10000"));
+  assert.throws(() => parseSnapshot("migration\tshared\tcom.example.app"));
+});
+
 test("new UI text has English and Chinese translations", () => {
   const en = JSON.parse(readFileSync(new URL("../webui/src/locales/strings/en.json", import.meta.url)));
   const zh = JSON.parse(readFileSync(new URL("../webui/src/locales/strings/zh.json", import.meta.url)));
-  for (const key of ["android_user", "shared_uid_confirm", "module_isolated", "shared_isolation", "missing_instance", "partial_isolation", "refresh_required", "refresh_boundary"]) {
+  for (const key of ["android_user", "shared_uid_confirm", "module_isolated", "shared_isolation", "missing_instance", "partial_isolation", "refresh_required", "refresh_boundary", "migration_title", "migration_summary", "migration_boundary", "migration_backup", "migration_missing", "migration_scope", "migration_system", "migration_shared", "migration_dismiss"]) {
     assert.equal(typeof en[key], "string");
     assert.equal(typeof zh[key], "string");
   }

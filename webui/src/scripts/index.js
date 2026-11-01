@@ -15,6 +15,7 @@ let currentProfile = "";
 let snapshot = null;
 let busy = false;
 let isolateList = [];
+let acknowledgedMigration = "";
 
 async function run(cmd) {
   const { errno, stdout, stderr } = await exec(cmd);
@@ -298,6 +299,29 @@ async function deleteProfile(profileName) {
 async function loadApps() {
   snapshot = parseSnapshot(await backend("snapshot"));
   renderApps();
+  showMigrationNotice();
+}
+
+function showMigrationNotice() {
+  if (!snapshot.migration.length) return;
+  const report = JSON.stringify(snapshot.migration);
+  if (acknowledgedMigration === report) return;
+  try {
+    if (localStorage.getItem("net-switch-migration") === report) return;
+  } catch { /* Show the notice again when WebView storage is unavailable. */ }
+  const dialog = document.getElementById("migration-dialog");
+  const imported = snapshot.migration.filter((entry) => entry.reason === "imported");
+  const skipped = snapshot.migration.filter((entry) => entry.reason !== "imported");
+  document.getElementById("migration-summary").textContent = getTranslation("migration_summary", imported.length, skipped.length);
+  document.getElementById("migration-skipped").textContent = skipped.map((entry) =>
+    `${entry.packageName}${entry.uid === "-" ? "" : ` (UID ${entry.uid})`}: ${getTranslation(`migration_${entry.reason}`)}`,
+  ).join("\n");
+  document.getElementById("migration-dismiss").onclick = () => {
+    acknowledgedMigration = report;
+    try { localStorage.setItem("net-switch-migration", report); } catch { /* Retry the notice next time. */ }
+    dialog.close();
+  };
+  if (!dialog.open) dialog.showModal();
 }
 
 function renderApps() {
@@ -360,7 +384,10 @@ function setupSearch() {
 }
 
 window.addEventListener("languagechange", () => {
-  if (snapshot) renderApps();
+  if (snapshot) {
+    renderApps();
+    showMigrationNotice();
+  }
 });
 
 function setupImportExport() {
@@ -479,6 +506,7 @@ function updateIoTexts() {
 document.addEventListener("DOMContentLoaded", async () => {
   await loadProfiles();
   await withBusy(async () => {
+    await backend("migrate");
     await loadApps();
     await loadPersistedProfile();
   });

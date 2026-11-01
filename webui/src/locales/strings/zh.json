@@ -64,5 +64,14 @@
   "module_isolated": "已由 Net Switch 隔离",
   "shared_isolation": "因共享 UID 被隔离",
   "pending_isolation": "已选择，但规则尚未生效",
-  "module_unblocked": "未被 Net Switch 隔离"
+  "module_unblocked": "未被 Net Switch 隔离",
+  "migration_title": "已导入旧版配置",
+  "migration_summary": "已为用户 0 导入 {0} 项，跳过 {1} 项。",
+  "migration_boundary": "仅继承用户 0 的选择，没有扩展到其他用户或资料。系统 UID 和共享 UID 已跳过，请手动审阅。普通 UID 的隔离仍可能影响应用功能。",
+  "migration_backup": "原始 v1.2 配置文件已保留。此报告说明导入结果，不代表当前规则状态。升级后请重启以清除旧版未标记的规则。",
+  "migration_missing": "用户 0 中未安装",
+  "migration_scope": "条目属于其他用户，不自动继承",
+  "migration_system": "系统 UID，需要手动审阅",
+  "migration_shared": "多个包共享此 UID，需要手动审阅",
+  "migration_dismiss": "我知道了"
 }

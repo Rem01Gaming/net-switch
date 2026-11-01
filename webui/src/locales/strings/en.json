@@ -65,5 +65,14 @@
   "module_isolated": "Isolated by Net Switch",
   "shared_isolation": "Isolated through a shared UID",
   "pending_isolation": "Selected, but rules are not applied",
-  "module_unblocked": "Not blocked by Net Switch"
+  "module_unblocked": "Not blocked by Net Switch",
+  "migration_title": "Legacy configuration imported",
+  "migration_summary": "Imported {0} selections for user 0. Skipped {1} entries.",
+  "migration_boundary": "Only user 0 selections were inherited. Other users and profiles were not selected. System and shared UIDs were skipped; review them manually. An ordinary UID can still affect app functionality.",
+  "migration_backup": "The original v1.2 file was kept. This report describes the import, not the current rule state. Reboot after upgrading to remove old untagged rules.",
+  "migration_missing": "not installed in user 0",
+  "migration_scope": "entry targets another user; not inherited automatically",
+  "migration_system": "system UID; manual review required",
+  "migration_shared": "UID shared by multiple packages; manual review required",
+  "migration_dismiss": "Understood"
 }
