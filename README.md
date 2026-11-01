@@ -12,7 +12,7 @@ Fully standalone, operates fully on iptables.
 - Module WebUI for easy configuration
 - **Profiles**: Save and restore sets of isolated apps (new in v1.3)
 - **Backup Manager**: Save and restore created profiles (new in v1.3)
-- **Revamped WebUI**: Responsive design with animations and feedback (new in v1.3)
+- Simple app list with an independent switch for each Android user
 
 ## Supported Root Managers
 - [APatch](https://github.com/bmax121/APatch) 
@@ -44,6 +44,124 @@ netswitch unblock all          # unblock all restricted packages
 
 Terminal Screenshot
 ![Net-switch Terminal Example](./terminal.webp)
+
+## Android users and profiles
+
+Each WebUI row identifies its Android user next to the package name (for example,
+`User 10 · com.example.app`). Each switch manages that instance independently.
+The same package can be isolated in a work profile and allowed in user 0.
+The list includes stopped users and paused profiles. **Isolate in all
+existing users** selects the currently installed instances; each remains
+independently editable. It does not automatically select future users.
+
+The WebUI uses the simple v1.2 list layout and defaults to English. Other
+languages remain available through **Select Language**. Saved profiles and the
+backup manager are retained under the collapsed **Profile Management** section.
+
+```sh
+netswitch block --user 10 com.example.app
+netswitch unblock --user 10 com.example.app
+netswitch block --all-users com.example.app
+netswitch apply       # refresh installed UIDs and reconcile both address families
+netswitch clear       # remove module rules, keep saved selections
+```
+
+Commands without a user option still target **user 0**. `unblock all` clears all
+users' selections. Existing `isolated.json` entries and saved profiles remain
+valid: `"com.example.app"` means user 0; `"10:com.example.app"` means user 10.
+Profile export/import preserves these entries. Older versions do not understand
+the scoped entries; keep a backup before downgrading.
+
+The firewall works on **full UIDs, not individual package names**. Packages with
+the same UID cannot be isolated independently. The WebUI shows affected packages
+and distinguishes a selected app from one isolated through a shared UID. CLI
+commands report the same scope and require `--allow-shared-uid` for new selections
+of shared/system UIDs. System UIDs (especially appId 1000) can also own services
+not represented by the listed packages. Removing one selection keeps the UID
+blocked while another selection still needs it.
+
+### Upgrading from v1.2
+
+If the new configuration is missing or zero bytes, the first boot-time `apply`
+or WebUI opening imports `/data/adb/net-switch/isolated.json`. You can also run
+`netswitch migrate`. The old file is kept unchanged. Migration targets **user 0**,
+matching v1.2 behavior, not whichever user happens to be in the foreground.
+It imports only exactly matched, installed packages with a non-system UID
+(appId >= 10000) that is not shared by another installed package. System/shared
+UIDs, missing packages and entries for other users are skipped for manual review.
+This limits the affected scope; it does not guarantee that blocking an ordinary
+app has no side effects. Other users and future installations are not selected.
+
+An existing nonempty v1.3 configuration, including `[]`, is never overwritten by
+migration. Failed queries or rule updates leave it unchanged and allow retry;
+IPv4/IPv6 rollback limitations below still apply. A report is saved alongside the
+new configuration as `migration.tsv` and included in `netswitch snapshot`.
+The WebUI shows imported/skipped counts and skip reasons until **Understood** is
+clicked. Acknowledgment is local to that WebView; clearing its storage or using
+another manager may show the report again. It is an import report, not live rule
+status. Review skipped entries before explicitly selecting them.
+
+### Refresh and failure handling
+
+WebUI changes, profile application, CLI changes and the boot service use the same
+`netswitch` backend. It enumerates users with `pm list users`, queries installed
+packages and their actual full UIDs using `pm list packages -U --user ID`, and
+matches package names exactly. Apart from the one-time legacy migration above,
+opening the WebUI reads state without reapplying rules or a saved profile.
+No polling service or package/user event listener is installed.
+
+WebUI updates request a verified snapshot in the same backend call, reusing that
+update's package inventory. Unchanged app rows are retained and the clicked row
+shows a pending state until completion. There is no persistent UID cache: each
+update still queries current installations and checks both address families.
+
+After installing/uninstalling apps or changing Android users, use **Refresh
+rules** or `netswitch apply`. A refresh removes stale UID rules and resolves
+reinstalled packages again. Missing packages/users retain their saved selections
+but have no desired UID rule. Remove unwanted entries explicitly; Android user ID
+reuse can make a retained entry apply to a new user with that ID. Existing
+selections follow UID changes; shared/system UID scope is reported on each apply,
+and the WebUI asks for confirmation when manually refreshing such selections.
+
+User/package query failures, malformed responses and empty per-user package
+responses abort without changing rules. This conservatively includes users whose
+package inventory is not ready yet. Retry when PackageManager is available;
+`netswitch clear` and `netswitch unblock all` can revoke module rules without it.
+The boot service still waits for `sys.boot_completed`: this change does **not**
+close the boot-time networking window. Boot errors are written to the kernel log;
+there is no continuous retry or guarantee of coverage before the next refresh.
+
+Rules live in the reserved `NETSWITCH` filter chain with a tagged OUTPUT jump.
+Updates add missing rules before deleting obsolete rules and do not flush OUTPUT
+or touch other firewalls. A directory lock serializes writers. IPv4 and IPv6 are
+not an atomic transaction: on failure before committing the configuration, the backend attempts to restore both
+previous UID sets and leaves the saved configuration unchanged. A failed rollback
+returns exit code 2 and reports incomplete state; inspect `netswitch list` and
+retry `apply` or `clear`. If the final status query fails after a successful commit,
+the error explicitly says the rules were updated; the WebUI retries reading state.
+Forced termination/power loss can interrupt an update.
+A lock left by SIGKILL must only be removed after verifying no backend process is
+running; the default lock `/dev/.net-switch-lock` is cleared by reboot.
+
+**Upgrade boundary:** older releases installed untagged rules directly in OUTPUT.
+They cannot be distinguished reliably from another firewall's identical rules,
+so this version does not delete them. Reboot after updating to start with the new
+module-owned rules. WebUI state describes only the new module rules, not legacy
+rules or restrictions imposed by other software.
+
+### Development checks
+
+The tests use synthetic Android command output and a firewall model; they do not
+connect to a device or modify the host firewall.
+
+```sh
+python -m unittest discover -s tests -v
+node --test tests/test_webui.mjs
+cd webui && npm ci && npm run build
+```
+
+On Windows, set `NETSWITCH_TEST_SHELL` to a POSIX shell such as Git for Windows
+`sh.exe`. Passing these tests does not replace testing on Android/root managers.
 
 ## Changelog
 

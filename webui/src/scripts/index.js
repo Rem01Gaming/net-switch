@@ -1,50 +1,73 @@
+// Modified: use the shared per-user backend for isolation and rule state.
 import { exec, toast } from "kernelsu";
+import { shellQuote, normalizeSelections, normalizeProfiles, parseSnapshot, isolationState, needsUidConsent } from "./backend.js";
 import "./language.js";
-import "@fortawesome/fontawesome-free/css/all.min.css";
 
 const template = document.getElementById("app-template").content;
 const appsList = document.getElementById("apps-list");
 
-const configPath = "/data/adb/.config/net-switch/isolated.json";
+const backendPath = "/data/adb/modules/net-switch/system/bin/netswitch";
 const profilesPath = "/data/adb/.config/net-switch/profiles.json";
 const defaultConfigPath = "/data/adb/.config/net-switch/default.json";
 
-let profiles = {};
+let profiles = Object.create(null);
 let currentProfile = "";
-let installedPackages = new Set();
+let snapshot = null;
+let busy = false;
 let isolateList = [];
+let acknowledgedMigration = "";
+let renderedApps = [];
 
 async function run(cmd) {
   const { errno, stdout, stderr } = await exec(cmd);
-  if (errno !== 0) {
-    toast(`stderr: ${stderr}`);
-
-    return undefined;
-  }
+  if (errno !== 0) throw new Error(stderr || `Command failed (${errno})`);
+  if (stderr?.trim()) toast(stderr.trim());
   return stdout;
 }
 
-async function getUidForPackage(pkg) {
-  if (!pkg) return null;
+async function backend(...args) {
+  return run(`sh ${shellQuote(backendPath)} ${args.map(shellQuote).join(" ")}`);
+}
 
-  const candidates = [
-    `grep "^${pkg}" /data/system/packages.list | awk '{print $2; exit}'`,
-    `dumpsys package '${pkg}' | sed -n 's/.*userId=\\([0-9][0-9]*\\).*/\\1/p' | head -1`,
-    `dumpsys package '${pkg}' | grep -Eo 'userId=[0-9]+' | head -1 | cut -d= -f2`,
-    `pm dump '${pkg}' | sed -n 's/.*userId=\\([0-9][0-9]*\\).*/\\1/p' | head -1`,
-  ];
+async function updateRules(command, ...args) {
+  snapshot = parseSnapshot(await backend(command, "--snapshot", ...args));
+  renderApps();
+  showMigrationNotice();
+}
 
-  for (const cmd of candidates) {
+async function withBusy(action) {
+  if (busy) return;
+  busy = true;
+  const spinner = document.getElementById("loading-spinner");
+  const errorMessage = document.getElementById("operation-error");
+  errorMessage.textContent = "";
+  spinner?.classList.remove("hidden");
+  try {
+    await action();
+  } catch (error) {
+    errorMessage.textContent = `${getTranslation("operation_error")} ${error.message}`;
+    toast(`${getTranslation("operation_error")} ${error.message}`);
     try {
-      const out = await run(cmd);
-      if (!out) continue;
-      const trimmed = out.toString().trim();
-      const m = trimmed.match(/(\d+)/);
-      if (m && m[1]) return m[1];
-    } catch (e) { }
+      await loadApps();
+      updateProfileSelect();
+    } catch {
+      snapshot = null;
+      appsList.replaceChildren();
+      document.getElementById("refresh-note").textContent = getTranslation("rule_state_unavailable");
+    }
+  } finally {
+    busy = false;
+    spinner?.classList.add("hidden");
   }
+}
 
-  return null;
+function confirmUidScope(apps) {
+  const affected = apps.filter((app) => needsUidConsent(app, snapshot));
+  if (!affected.length) return true;
+  const uids = [...new Set(affected.map((app) => app.uid))];
+  const details = uids.map((uid) => `UID ${uid}: ${snapshot.peers.get(uid)
+    .map((app) => `${app.user}: ${app.packageName}`).join(", ")}`).join("\n");
+  return window.confirm(`${getTranslation("shared_uid_confirm")}\n\n${details}`);
 }
 
 async function readDefaultConfig() {
@@ -63,7 +86,7 @@ async function readDefaultConfig() {
 
 async function writeDefaultConfig(cfg) {
   try {
-    await run(`echo '${JSON.stringify(cfg)}' > ${defaultConfigPath}`);
+    await run(`printf '%s\\n' ${shellQuote(JSON.stringify(cfg))} > ${defaultConfigPath}`);
   } catch (e) { }
 }
 
@@ -79,7 +102,7 @@ async function loadPersistedProfile() {
   try {
     const cfg = await readDefaultConfig();
     if (cfg.currentProfile && profiles[cfg.currentProfile]) {
-      await loadProfile(cfg.currentProfile);
+      currentProfile = cfg.currentProfile;
 
       const profileSelect = document.getElementById("profile-select");
       if (profileSelect) {
@@ -91,7 +114,8 @@ async function loadPersistedProfile() {
 
 function sortChecked() {
   [...appsList.children]
-    .sort((a, b) => (a.querySelector(".ns-toggle").checked ? -1 : 1))
+    .sort((a, b) => Number(b.querySelector(".ns-toggle").checked) - Number(a.querySelector(".ns-toggle").checked)
+      || a.dataset.key.localeCompare(b.dataset.key, undefined, { numeric: true }))
     .forEach((node) => appsList.appendChild(node));
 }
 
@@ -99,152 +123,91 @@ function safeId(prefix, name) {
   return `${prefix}-${name.replace(/[^a-z0-9]/gi, "-")}`;
 }
 
-function updateStatus(node) {
-  const toggle = node.querySelector(".ns-toggle");
-  const statusEl = node.querySelector(".app-status");
-  const labelEl = node.querySelector(".switch-label");
-
-  if (!toggle || !statusEl || !labelEl) return;
-
-  const isIsolated = toggle.checked;
-
-  if (isIsolated) {
-    statusEl.textContent = getTranslation
-      ? getTranslation("isolated")
-      : "🚫 Isolated";
-    labelEl.textContent = getTranslation
-      ? getTranslation("isolated")
-      : "Isolated";
-    statusEl.className =
-      "app-status text-xs text-red-600 dark:text-red-400 font-medium";
-    labelEl.className =
-      "switch-label text-xs text-red-600 dark:text-red-400 font-medium";
-  } else {
-    statusEl.textContent = getTranslation
-      ? getTranslation("connected")
-      : "📡 Connected";
-    labelEl.textContent = getTranslation
-      ? getTranslation("connected")
-      : "Connected";
-    statusEl.className =
-      "app-status text-xs text-green-600 dark:text-green-400 font-medium";
-    labelEl.className =
-      "switch-label text-xs text-green-600 dark:text-green-400 font-medium";
+function updateStatus(node, app) {
+  const state = isolationState(app, snapshot);
+  const blocked = state === "module_isolated" || state === "shared_isolation";
+  for (const selector of [".app-status"]) {
+    const el = node.querySelector(selector);
+    el.removeAttribute("data-i18n");
+    el.textContent = getTranslation(state);
+    el.className = `${selector.slice(1)} text-xs font-medium ${blocked ? "text-red-600 dark:text-red-400" : "text-gray-500 dark:text-gray-400"}`;
   }
 }
 
-function populateApp(name, checked) {
+function populateApp(app) {
   const frag = document.importNode(template, true);
   const el = frag.firstElementChild;
-  if (!el) return;
-
-  const nameElement = el.querySelector("p");
-  if (nameElement) nameElement.textContent = name;
-
+  el.dataset.key = app.key;
+  el.dataset.user = app.user;
+  el.querySelector(".app-name").textContent = `${getTranslation("user_label", app.user)} · ${app.packageName}`;
   const checkbox = el.querySelector(".ns-toggle");
-  if (checkbox) checkbox.checked = checked;
-
-  // Update app status indicator
-  const statusElement = el.querySelector(".app-status");
-  const switchLabel = el.querySelector(".switch-label");
-
-  // assign deterministic IDs
-  const statusId = safeId("ns-status", name);
-  const switchId = safeId("ns-switch", name);
-  const checkboxId = safeId("ns-toggle", name);
-
-  if (statusElement) statusElement.id = statusId;
-  if (switchLabel) switchLabel.id = switchId;
-  if (checkbox) checkbox.id = checkboxId;
-
-  el.dataset.statusId = statusId;
-  el.dataset.switchId = switchId;
-  el.dataset.checkboxId = checkboxId;
-
-  updateStatus(el);
-
-  if (checked) isolateList.push(name);
-
-  if (checkbox) {
-    checkbox.addEventListener("change", async () => {
-      const spinner = document.getElementById("loading-spinner");
-      if (spinner) spinner.classList.remove("hidden");
-
-      try {
-        if (checkbox.checked) {
-          if (!isolateList.includes(name)) isolateList.push(name);
-        } else {
-          const index = isolateList.indexOf(name);
-          if (index !== -1) isolateList.splice(index, 1);
-        }
-
-        const uidTrimmed = await getUidForPackage(name);
-
-        if (!uidTrimmed) {
-          throw new Error(
-            getTranslation
-              ? getTranslation("cannot_get_uid", name)
-              : `Unable to get UID for ${name}`,
-          );
-        }
-
-        if (checkbox.checked) {
-          await run(
-            `iptables -C OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT 2>/dev/null || iptables -I OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT`,
-          );
-          await run(
-            `ip6tables -C OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT 2>/dev/null || ip6tables -I OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT`,
-          );
-        } else {
-          await run(
-            `iptables -D OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT 2>/dev/null || true`,
-          );
-          await run(
-            `ip6tables -D OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT 2>/dev/null || true`,
-          );
-        }
-
-        updateStatus(el);
-        await saveIsolateList();
-
-        if (currentProfile && profiles[currentProfile]) {
-          profiles[currentProfile] = [...isolateList];
-          await saveProfiles();
-          updateProfileSelect();
-          await persistDefaultKey("currentProfile", currentProfile);
-        }
-
-        sortChecked();
-
-        const message = getTranslation
-          ? getTranslation("operation_completed")
-          : "Operation completed!";
-        toast(message, "success");
-      } catch (error) {
-        checkbox.checked = !checkbox.checked;
-        updateStatus(el);
-
-        const errorMsg = getTranslation
-          ? getTranslation("operation_error")
-          : "Operation error!";
-        toast(`${errorMsg} ${error.message}`, "error");
-      } finally {
-        if (spinner) spinner.classList.add("hidden");
-      }
-    });
+  checkbox.checked = snapshot.selected.has(app.key);
+  checkbox.id = safeId("ns-toggle", app.key);
+  checkbox.setAttribute("aria-label", `${getTranslation("isolate_instance")} ${app.user}: ${app.packageName}`);
+  checkbox.disabled = app.uid === null && !checkbox.checked;
+  if (app.uid && needsUidConsent(app, snapshot)) {
+    const warning = document.createElement("details");
+    warning.className = "mt-1 text-xs text-amber-700 dark:text-amber-300";
+    const summary = document.createElement("summary");
+    summary.textContent = `UID ${app.uid} · ${getTranslation("shared_uid_scope")}`;
+    const peers = document.createElement("p");
+    peers.className = "break-words";
+    peers.textContent = snapshot.peers.get(app.uid).map((peer) => `${peer.user}: ${peer.packageName}`).join(", ");
+    warning.append(summary, peers);
+    if (Number(app.uid) % 100000 < 10000) {
+      const systemNote = document.createElement("p");
+      systemNote.textContent = getTranslation("system_uid_scope");
+      warning.appendChild(systemNote);
+    }
+    el.appendChild(warning);
   }
-
+  updateStatus(el, app);
+  checkbox.addEventListener("change", () => {
+    const block = checkbox.checked;
+    checkbox.checked = snapshot.selected.has(app.key);
+    return withBusy(async () => {
+      if (block && !confirmUidScope([app])) return;
+      checkbox.disabled = true;
+      el.querySelector(".app-status").textContent = getTranslation("updating_rules");
+      el.setAttribute("aria-busy", "true");
+      try {
+        await updateRules(block ? "block" : "unblock", "--user", app.user,
+          ...(block && needsUidConsent(app, snapshot) ? ["--allow-shared-uid"] : []), app.packageName);
+      } finally {
+        checkbox.disabled = false;
+        el.removeAttribute("aria-busy");
+      }
+      await updateCurrentProfile();
+    });
+  });
+  if (app.uid !== null && snapshot.apps.some((item) => item.packageName === app.packageName && item.user !== app.user && item.uid !== null)) {
+    const allUsers = document.createElement("button");
+    allUsers.className = "mt-2 text-xs text-blue-600 dark:text-blue-400";
+    allUsers.textContent = getTranslation("block_existing_users");
+    allUsers.addEventListener("click", () => withBusy(async () => {
+      const instances = snapshot.apps.filter((item) => item.packageName === app.packageName && item.uid !== null);
+      if (!confirmUidScope(instances)) return;
+      await updateRules("block", "--all-users",
+        ...(instances.some((item) => needsUidConsent(item, snapshot)) ? ["--allow-shared-uid"] : []), app.packageName);
+      await updateCurrentProfile();
+    }));
+    el.appendChild(allUsers);
+  }
   appsList.appendChild(el);
 }
 
-async function saveIsolateList() {
-  await run(`echo '${JSON.stringify(isolateList)}' > ${configPath}`);
+async function updateCurrentProfile() {
+  if (currentProfile && profiles[currentProfile]) {
+    profiles[currentProfile] = [...isolateList];
+    await saveProfiles();
+    updateProfileSelect();
+  }
 }
 
 async function loadProfiles() {
   try {
-    const profilesData = await run(`cat ${profilesPath}`);
-    profiles = profilesData ? JSON.parse(profilesData) : {};
+    const profilesData = await run(`if [ -f ${profilesPath} ]; then cat ${profilesPath}; else printf "{}"; fi`);
+    profiles = normalizeProfiles(profilesData ? JSON.parse(profilesData) : {});
     updateProfileSelect();
   } catch (error) {
     console.error("Failed to load profiles:", error);
@@ -252,7 +215,7 @@ async function loadProfiles() {
 }
 
 async function saveProfiles() {
-  await run(`echo '${JSON.stringify(profiles)}' > ${profilesPath}`);
+  await run(`printf '%s\\n' ${shellQuote(JSON.stringify(profiles))} > ${profilesPath}.tmp && mv ${profilesPath}.tmp ${profilesPath}`);
 }
 
 function updateProfileSelect() {
@@ -283,66 +246,17 @@ function updateProfileSelect() {
 }
 
 async function loadProfile(profileName) {
-  if (!profiles[profileName]) {
-    const errorMsg = getTranslation
-      ? getTranslation("profile_not_found", profileName)
-      : `Profile "${profileName}" not found`;
-    toast(errorMsg, "error");
+  if (!profiles[profileName]) throw new Error(getTranslation("profile_not_found", profileName));
+  const entries = normalizeSelections(profiles[profileName]);
+  const instances = snapshot.apps.filter((app) => entries.includes(app.key));
+  if (!confirmUidScope(instances)) {
+    updateProfileSelect();
     return;
   }
-
-  const spinner = document.getElementById("loading-spinner");
-  if (spinner) spinner.classList.remove("hidden");
-
-  try {
-    await clearAllIsolation();
-    isolateList.length = 0;
-
-    const profileApps = profiles[profileName];
-    for (const app of profileApps) {
-      if (installedPackages.has(app)) {
-        isolateList.push(app);
-
-        const uidTrimmed = await getUidForPackage(app);
-        if (uidTrimmed) {
-          await run(
-            `iptables -C OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT 2>/dev/null || iptables -I OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT`,
-          );
-          await run(
-            `ip6tables -C OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT 2>/dev/null || ip6tables -I OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT`,
-          );
-        }
-      }
-    }
-
-    [...appsList.children].forEach((node) => {
-      const appName = node.querySelector("p").textContent;
-      const checkbox = node.querySelector(".ns-toggle");
-      if (!checkbox) return;
-
-      checkbox.checked = isolateList.includes(appName);
-      updateStatus(node);
-    });
-
-    currentProfile = profileName;
-    await saveIsolateList();
-
-    sortChecked();
-
-    await persistDefaultKey("currentProfile", currentProfile);
-
-    const successMsg = getTranslation
-      ? getTranslation("profile_activated", profileName, profileApps.length)
-      : `✅ Profile "${profileName}" activated • ${profileApps.length} apps isolated`;
-    toast(successMsg, "success");
-  } catch (error) {
-    const errorMsg = getTranslation
-      ? getTranslation("operation_error")
-      : "Operation error!";
-    toast(`${errorMsg} ${error.message}`, "error");
-  } finally {
-    if (spinner) spinner.classList.add("hidden");
-  }
+  await updateRules("replace", ...(instances.some((app) => needsUidConsent(app, snapshot)) ? ["--allow-shared-uid"] : []), JSON.stringify(entries));
+  currentProfile = profileName;
+  await persistDefaultKey("currentProfile", currentProfile);
+  updateProfileSelect();
 }
 
 async function saveCurrentProfile(profileName) {
@@ -392,62 +306,54 @@ async function deleteProfile(profileName) {
   }
 }
 
-async function clearAllIsolation() {
-  for (const app of isolateList) {
-    const uidTrimmed = await getUidForPackage(app);
-    if (uidTrimmed) {
-      await run(
-        `iptables -D OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT 2>/dev/null || true`,
-      );
-      await run(
-        `ip6tables -D OUTPUT -m owner --uid-owner ${uidTrimmed} -j REJECT 2>/dev/null || true`,
-      );
-    }
-  }
+async function loadApps() {
+  snapshot = parseSnapshot(await backend("snapshot"));
+  renderApps();
+  showMigrationNotice();
 }
 
-async function loadApps() {
-  const spinner = document.getElementById("loading-spinner");
-  if (spinner) spinner.classList.remove("hidden");
-
+function showMigrationNotice() {
+  if (!snapshot.migration.length) return;
+  const report = JSON.stringify(snapshot.migration);
+  if (acknowledgedMigration === report) return;
   try {
-    const packages = await run("pm list packages | cut -d: -f2 | sort");
-    if (!packages) return;
+    if (localStorage.getItem("net-switch-migration") === report) return;
+  } catch { /* Show the notice again when WebView storage is unavailable. */ }
+  const dialog = document.getElementById("migration-dialog");
+  const imported = snapshot.migration.filter((entry) => entry.reason === "imported");
+  const skipped = snapshot.migration.filter((entry) => entry.reason !== "imported");
+  document.getElementById("migration-summary").textContent = getTranslation("migration_summary", imported.length, skipped.length);
+  document.getElementById("migration-skipped").textContent = skipped.map((entry) =>
+    `${entry.packageName}${entry.uid === "-" ? "" : ` (UID ${entry.uid})`}: ${getTranslation(`migration_${entry.reason}`)}`,
+  ).join("\n");
+  document.getElementById("migration-dismiss").onclick = () => {
+    acknowledgedMigration = report;
+    try { localStorage.setItem("net-switch-migration", report); } catch { /* Retry the notice next time. */ }
+    dialog.close();
+  };
+  if (!dialog.open) dialog.showModal();
+}
 
-    installedPackages = new Set(packages.split("\n").filter(Boolean));
-
-    const isolatedListOut = await run(`cat ${configPath}`);
-    let isolated = isolatedListOut ? JSON.parse(isolatedListOut) : [];
-
-    const updatedIsolatedList = isolated.filter((app) =>
-      installedPackages.has(app),
-    );
-    if (isolated.length !== updatedIsolatedList.length) {
-      await run(
-        `echo '${JSON.stringify(updatedIsolatedList)}' > ${configPath}`,
-      );
-      isolated = updatedIsolatedList;
+function renderApps(force = false) {
+  isolateList = [...snapshot.selected];
+  const unchanged = !force && appsList.children.length === snapshot.apps.length
+    && renderedApps.length === snapshot.apps.length
+    && snapshot.apps.every((app, i) => app.key === renderedApps[i].key && app.uid === renderedApps[i].uid);
+  if (unchanged) {
+    const apps = new Map(snapshot.apps.map((app) => [app.key, app]));
+    for (const node of appsList.children) {
+      const app = apps.get(node.dataset.key);
+      node.querySelector(".ns-toggle").checked = snapshot.selected.has(app.key);
+      updateStatus(node, app);
     }
-
-    isolateList.length = 0;
-    isolateList.push(...isolated);
-
-    appsList.innerHTML = "";
-
-    for (const pkg of installedPackages) {
-      const isIsolated = isolated.includes(pkg);
-      populateApp(pkg, isIsolated);
-    }
-
-    sortChecked();
-  } catch (error) {
-    const errorMsg = getTranslation
-      ? getTranslation("operation_error")
-      : "Operation error!";
-    toast(`${errorMsg} ${error.message}`, "error");
-  } finally {
-    if (spinner) spinner.classList.add("hidden");
+  } else {
+    appsList.replaceChildren();
+    for (const app of snapshot.apps) populateApp(app);
   }
+  renderedApps = snapshot.apps;
+  document.getElementById("refresh-note").textContent = getTranslation(snapshot.needsRefresh ? "refresh_required" : "refresh_boundary");
+  sortChecked();
+  filterApps();
 }
 
 async function createProfile() {
@@ -475,51 +381,35 @@ async function createProfile() {
 }
 
 async function connectAllApps() {
-  const spinner = document.getElementById("loading-spinner");
-  if (spinner) spinner.classList.remove("hidden");
+  await updateRules("unblock", "all");
+  currentProfile = "";
+  await persistDefaultKey("currentProfile", "");
+  updateProfileSelect();
+}
 
-  try {
-    await clearAllIsolation();
-    isolateList.length = 0;
-    await saveIsolateList();
-    currentProfile = "";
-    await persistDefaultKey("currentProfile", "");
-
-    [...appsList.children].forEach((node) => {
-      const checkbox = node.querySelector(".ns-toggle");
-      if (checkbox) checkbox.checked = false;
-      updateStatus(node);
-    });
-
-    sortChecked();
-
-    const successMsg = getTranslation
-      ? getTranslation("all_apps_connected")
-      : "🧹 All apps are now connected";
-    toast(successMsg, "success");
-  } catch (error) {
-    const errorMsg = getTranslation
-      ? getTranslation("operation_error")
-      : "Operation error!";
-    toast(`${errorMsg} ${error.message}`, "error");
-  } finally {
-    if (spinner) spinner.classList.add("hidden");
+function filterApps() {
+  const query = document.getElementById("search").value.toLowerCase();
+  for (const node of appsList.children) {
+    const matches = node.querySelector(".app-name").textContent.toLowerCase().includes(query);
+    node.style.display = matches ? "" : "none";
   }
 }
 
 function setupSearch() {
-  const searchInput = document.getElementById("search");
-  if (!searchInput) return;
-
-  searchInput.addEventListener("input", (e) => {
-    const query = e.target.value.toLowerCase();
-    [...appsList.children].forEach((node) => {
-      const appName = node.querySelector("p")?.textContent?.toLowerCase();
-      const matches = !query || (appName && appName.includes(query));
-      node.style.display = matches ? "" : "none";
-    });
-  });
+  document.getElementById("search")?.addEventListener("input", filterApps);
+  document.getElementById("refresh-rules")?.addEventListener("click", () => withBusy(async () => {
+    await loadApps();
+    if (!confirmUidScope(snapshot.apps.filter((app) => snapshot.selected.has(app.key)))) return;
+    await updateRules("apply");
+  }));
 }
+
+window.addEventListener("languagechange", () => {
+  if (snapshot) {
+    renderApps(true);
+    showMigrationNotice();
+  }
+});
 
 function setupImportExport() {
   const openIoBtn = document.getElementById("open-io-page");
@@ -567,7 +457,7 @@ function setupImportExport() {
 
     try {
       if (mode === "export") {
-        const exportResult = await exec(`cp ${profilesPath} '${path}'`);
+        const exportResult = await exec(`cp ${profilesPath} ${shellQuote(path)}`);
         if (exportResult.errno !== 0) {
           const errorMsg = getTranslation
             ? getTranslation("export_failed")
@@ -576,7 +466,7 @@ function setupImportExport() {
           return;
         }
         
-        await run(`chmod 644 '${path}' || true`);
+        await run(`chmod 644 ${shellQuote(path)} || true`);
         const successMsg = getTranslation
           ? getTranslation("export_success")
           : "Profiles exported successfully";
@@ -586,17 +476,9 @@ function setupImportExport() {
           `if [ -f ${profilesPath} ]; then cp ${profilesPath} /data/adb/.config/net-switch/old_profiles.json; fi`,
         );
         
-        const importResult = await exec(`cp '${path}' ${profilesPath}`);
-        if (importResult.errno !== 0) {
-          const errorMsg = getTranslation
-            ? getTranslation("import_failed")
-            : "Import failed";
-          toast(`${errorMsg}: ${importResult.stderr}`, "error");
-          return;
-        }
-        
-        await run(`chmod 644 ${profilesPath} || true`);
-        await loadProfiles();
+        const imported = normalizeProfiles(JSON.parse(await run(`cat ${shellQuote(path)}`)));
+        profiles = imported;
+        await saveProfiles();
         updateProfileSelect();
         const successMsg = getTranslation
           ? getTranslation("import_success")
@@ -644,8 +526,11 @@ function updateIoTexts() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadProfiles();
-  await loadApps();
-  await loadPersistedProfile();
+  await withBusy(async () => {
+    await backend("migrate");
+    await loadApps();
+    await loadPersistedProfile();
+  });
   setupSearch();
   setupImportExport();
 
@@ -655,13 +540,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   profileSelect?.addEventListener("change", (e) => {
     if (e.target.value) {
-      loadProfile(e.target.value);
+      withBusy(() => loadProfile(e.target.value));
     } else {
-      connectAllApps();
+      withBusy(connectAllApps);
     }
   });
 
-  createProfileBtn?.addEventListener("click", createProfile);
+  createProfileBtn?.addEventListener("click", () => withBusy(createProfile));
   deleteProfileBtn?.addEventListener("click", async (e) => {
     e.preventDefault();
     const selectedProfile = document.getElementById("profile-select").value;
@@ -675,7 +560,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    await deleteProfile(profileToDelete);
+    await withBusy(() => deleteProfile(profileToDelete));
   });
 
   const openIoBtn = document.getElementById("open-io-page");

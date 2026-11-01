@@ -1,323 +1,89 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link href="styles/index.css" type="text/css" rel="stylesheet" />
-    <script type="module" src="scripts/index.js" type="text/javascript"></script>
-    <script type="module" src="scripts/mmrl.js" type="text/javascript"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="styles/index.css" type="text/css" rel="stylesheet">
+  <script type="module" src="scripts/index.js"></script>
+  <script type="module" src="scripts/mmrl.js"></script>
 </head>
-
-<body
-    class="root_layout min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 text-gray-800 dark:from-gray-900 dark:to-gray-800 dark:text-gray-200">
-    <!-- Header -->
-    <div class="border-b border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
-        <div class="px-4 py-3">
-            <div class="flex items-center justify-between w-full">
-                <div class="flex items-center space-x-2">
-                    <div
-                        class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-purple-600">
-                        <i class="fas fa-network-wired text-sm text-white"></i>
-                    </div>
-                    <div>
-                        <h1 data-i18n="title"
-                            class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-lg font-bold text-transparent">
-                            Net Switch
-                        </h1>
-                        <p data-i18n="subtitle" class="text-xs text-gray-500 dark:text-gray-400">
-                            Gestione Isolamento App
-                        </p>
-                    </div>
-                </div>
-                <!-- Language Button -->
-                <button id="language_btn"
-                    class="rounded-lg p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-                    title="Select Language">
-                    <i class="fas fa-globe text-sm"></i>
-                </button>
-            </div>
+<body class="bg-white text-gray-800 dark:bg-gray-900 dark:text-gray-200 root_layout min-h-screen">
+  <div id="home-page">
+    <!-- Keep the v1.2 search-and-list layout. -->
+    <div class="p-4 space-y-2">
+      <input type="search" id="search" placeholder="Search App" data-i18n-placeholder="search_placeholder"
+        class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring focus:ring-blue-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+      <div class="flex flex-wrap items-center gap-3 text-sm">
+        <button id="refresh-rules" data-i18n="refresh_rules" class="text-blue-600 dark:text-blue-400">Refresh rules</button>
+        <button id="language_btn" data-i18n="select_language" class="text-blue-600 dark:text-blue-400">Select Language</button>
+        <span id="loading-spinner" class="hidden" role="status" data-i18n="loading">Loading...</span>
+      </div>
+      <p id="refresh-note" aria-live="polite" class="text-xs text-gray-500 dark:text-gray-400"></p>
+      <p id="operation-error" role="alert" class="text-sm text-red-600 dark:text-red-400"></p>
+      <!-- Retain upstream profiles without putting them ahead of the app list. -->
+      <details id="profile-settings" class="text-sm">
+        <summary data-i18n="profiles_title" class="cursor-pointer">Profile Management</summary>
+        <div class="space-y-2 py-2">
+          <div class="flex gap-2">
+            <select id="profile-select" class="min-w-0 flex-1 rounded border p-2 dark:border-gray-700 dark:bg-gray-800">
+              <option value="" data-i18n="select_profile">Select Profile</option>
+            </select>
+            <button id="delete-profile" data-i18n="delete_profile" class="text-red-600 dark:text-red-400">Delete</button>
+          </div>
+          <div class="flex gap-2">
+            <input id="new-profile-name" placeholder="New profile name" data-i18n-placeholder="new_profile_placeholder"
+              class="min-w-0 flex-1 rounded border p-2 dark:border-gray-700 dark:bg-gray-800">
+            <button id="create-profile" data-i18n="create" class="text-blue-600 dark:text-blue-400">Create</button>
+          </div>
+          <button id="open-io-page" data-i18n="backup_manager" class="text-blue-600 dark:text-blue-400">Backup Manager</button>
         </div>
+      </details>
     </div>
-    <!-- Home page wrapper (so we can hide it when showing the dedicated IO page) -->
-    <div id="home-page">
-        <!-- Import / Export Profiles Section -->
-        <div
-            class="mx-3 mt-4 rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
-            <div class="p-4">
-                <div class="mb-4 flex items-center space-x-2">
-                    <div
-                        class="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-blue-500 to-cyan-600">
-                        <i class="fas fa-file-export text-xs text-white"></i>
-                    </div>
-                    <h2 data-i18n="import_export_title" class="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                        Import / Export Profiles
-                    </h2>
-                </div>
-
-                <div class="flex items-center gap-3">
-                    <button id="open-io-page" data-i18n="backup_manager" aria-label="Advanced features"
-                        class="rounded-full px-4 py-2 text-sm font-semibold text-white shadow-lg transform hover:-translate-y-0.5 transition-all duration-150"
-                        style="
-                                background: linear-gradient(
-                                    90deg,
-                                    #06b6d4,
-                                    #6366f1
-                                );
-                            "></button>
-                </div>
-            </div>
+    <div id="apps-list" class="space-y-4 px-4 pb-4"></div>
+    <template id="app-template">
+      <div class="border border-gray-300 rounded-md p-4 dark:border-gray-700">
+        <div class="flex justify-between items-center gap-3">
+          <div class="min-w-0 flex-1">
+            <p class="app-name m-0 text-sm dark:text-gray-200 break-all"></p>
+            <span class="app-status text-xs text-gray-500 dark:text-gray-400"></span>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer ml-auto shrink-0">
+            <input type="checkbox" class="ns-toggle sr-only peer">
+            <div class="w-11 h-6 bg-gray-200 rounded-full peer dark:bg-gray-700 peer-checked:bg-blue-600 peer-focus:ring-2 peer-focus:ring-blue-300"></div>
+            <div class="absolute w-4 h-4 bg-white rounded-full border border-gray-300 left-1 top-1 transition-transform peer-checked:translate-x-5 dark:border-gray-600 dark:peer-checked:border-white"></div>
+          </label>
         </div>
-
-        <!-- Profiles Section -->
-        <div
-            class="mx-3 mt-4 rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
-            <div class="p-4">
-                <div class="mb-4 flex items-center space-x-2">
-                    <div
-                        class="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-green-500 to-emerald-600">
-                        <i class="fas fa-user-cog text-xs text-white"></i>
-                    </div>
-                    <h2 data-i18n="profiles_title" class="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                        Gestione Profili
-                    </h2>
-                </div>
-
-                <div class="space-y-3">
-                    <!-- Profile Management -->
-                    <div class="rounded-lg bg-gray-50 p-3 dark:bg-gray-700">
-                        <div class="flex items-center space-x-2">
-                            <div class="relative flex-grow">
-                                <i
-                                    class="fas fa-users absolute top-1/2 left-2 -translate-y-1/2 transform text-xs text-gray-400"></i>
-                                <select id="profile-select"
-                                    class="w-full rounded-lg border border-gray-300 py-2 pr-3 pl-7 text-sm transition-all duration-200 focus:border-transparent focus:ring-1 focus:ring-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200">
-                                    <option value="" data-i18n="select_profile">
-                                        Seleziona Profilo
-                                    </option>
-                                </select>
-                            </div>
-
-                            <button id="delete-profile"
-                                class="rounded-lg bg-gradient-to-r from-red-500 to-red-600 px-3 py-2 text-sm whitespace-nowrap text-white shadow-md transition-all duration-200 hover:from-red-600 hover:to-red-700 focus:ring-1 focus:ring-red-500 focus:outline-none">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- New Profile Creation -->
-                    <div
-                        class="rounded-lg border border-purple-200 bg-gradient-to-r from-purple-50 to-pink-50 p-3 dark:border-gray-600 dark:from-gray-700 dark:to-gray-600">
-                        <div class="flex space-x-2">
-                            <div class="relative flex-1">
-                                <i
-                                    class="fas fa-plus-circle absolute top-1/2 left-2 -translate-y-1/2 transform text-xs text-gray-400"></i>
-                                <input type="text" id="new-profile-name" data-i18n-placeholder="new_profile_placeholder"
-                                    placeholder="Nome nuovo profilo"
-                                    class="w-full rounded-lg border border-gray-300 py-2 pr-3 pl-7 text-sm transition-all duration-200 focus:border-transparent focus:ring-1 focus:ring-purple-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200" />
-                            </div>
-                            <button id="create-profile"
-                                class="rounded-lg bg-gradient-to-r from-purple-500 to-pink-600 px-3 py-2 text-sm whitespace-nowrap text-white shadow-md transition-all duration-200 hover:from-purple-600 hover:to-pink-700 focus:ring-1 focus:ring-purple-500 focus:outline-none">
-                                <i class="fas fa-magic mr-1 text-xs"></i><span data-i18n="create">Crea</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Search Section -->
-        <div
-            class="mx-3 mt-4 rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
-            <div class="p-4">
-                <div class="mb-3 flex items-center space-x-2">
-                    <div
-                        class="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-yellow-500 to-orange-600">
-                        <i class="fas fa-search text-xs text-white"></i>
-                    </div>
-                    <h2 data-i18n="search_title" class="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                        Cerca App
-                    </h2>
-                </div>
-
-                <div class="relative">
-                    <i
-                        class="fas fa-search absolute top-1/2 left-3 -translate-y-1/2 transform text-xs text-gray-400"></i>
-                    <input type="search" id="search" data-i18n-placeholder="search_placeholder"
-                        placeholder="Cerca app per nome..."
-                        class="w-full rounded-lg border border-gray-300 py-2 pr-3 pl-8 text-sm transition-all duration-200 focus:border-transparent focus:ring-1 focus:ring-yellow-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200" />
-                </div>
-            </div>
-        </div>
-
-        <!-- Apps List -->
-        <div class="mx-3 mt-4 mb-6">
-            <div class="rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
-                <div class="p-4">
-                    <div class="mb-4 flex items-center space-x-2">
-                        <div
-                            class="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-indigo-500 to-purple-600">
-                            <i class="fas fa-mobile-alt text-xs text-white"></i>
-                        </div>
-                        <h2 data-i18n="apps_list_title" class="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                            Lista Applicazioni
-                        </h2>
-                    </div>
-                    <div id="apps-list" class="space-y-2"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- App Template -->
-        <template id="app-template">
-            <div
-                class="group rounded-lg border border-gray-200 bg-gradient-to-r from-white to-gray-50 p-3 shadow-sm transition-all duration-200 hover:shadow-md dark:border-gray-600 dark:from-gray-700 dark:to-gray-800">
-                <div class="flex items-center justify-between">
-                    <!-- App info -->
-                    <div class="flex min-w-0 flex-1 items-center space-x-3">
-                        <!-- App icon -->
-                        <div
-                            class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-400 to-purple-500 shadow-md">
-                            <i class="fas fa-mobile-alt text-xs text-white"></i>
-                        </div>
-
-                        <!-- App name and status -->
-                        <div class="min-w-0 flex-1">
-                            <p class="truncate text-sm font-medium text-gray-800 dark:text-gray-200"></p>
-                            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                                <span class="app-status" data-i18n="connected">📡 Connesso</span>
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- Compact Switch -->
-                    <div class="flex flex-shrink-0 items-center space-x-2">
-                        <div class="hidden text-right sm:block">
-                            <div class="switch-label text-xs text-gray-500 dark:text-gray-400" data-i18n="connected">
-                                Connesso
-                            </div>
-                        </div>
-
-                        <label class="switch-enhanced">
-                            <input type="checkbox" class="ns-toggle" />
-                            <span class="slider" aria-hidden="true"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-        </template>
-
-        <!-- Loading Spinner (hidden by default) -->
-        <div id="loading-spinner" class="bg-opacity-50 fixed inset-0 z-50 hidden items-center justify-center bg-black">
-            <div class="rounded-xl bg-white p-6 shadow-2xl dark:bg-gray-800">
-                <div class="flex items-center space-x-3">
-                    <div class="h-6 w-6 animate-spin rounded-full border-b-2 border-blue-600"></div>
-                    <div class="text-base font-medium text-gray-800 dark:text-gray-200" data-i18n="loading">
-                        Caricamento...
-                    </div>
-                </div>
-            </div>
-        </div>
+      </div>
+    </template>
+  </div>
+  <div id="io-page" class="hidden p-4 space-y-3">
+    <h2 data-i18n="import_export_title">Import / Export Profiles</h2>
+    <label for="io-mode-select" data-i18n="mode_label" class="block">Mode</label>
+    <select id="io-mode-select" class="rounded border p-2 dark:border-gray-700 dark:bg-gray-800">
+      <option data-i18n="export_option" value="export">Export</option>
+      <option data-i18n="import_option" value="import">Import</option>
+    </select>
+    <label for="io-path-input" id="io-path-label" data-i18n="destination_path" class="block">Destination path</label>
+    <input id="io-path-input" type="text" placeholder="/sdcard/Download/profiles.json"
+      class="w-full rounded border p-2 dark:border-gray-700 dark:bg-gray-800">
+    <p id="io-desc" data-i18n="export_desc" class="text-sm">Enter destination path for export</p>
+    <div class="flex gap-4">
+      <button id="io-action-btn" data-i18n="run" class="text-blue-600 dark:text-blue-400">Run</button>
+      <button id="io-back-btn" data-i18n="back_button">Back</button>
     </div>
-    <!-- end #home-page -->
-
-    <!-- Dedicated Import/Export Page (hidden by default) -->
-    <div id="io-page"
-        class="hidden mx-3 mt-4 rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
-        <div class="p-4">
-            <div class="mb-4 flex items-center space-x-2">
-                <div
-                    class="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-cyan-500 to-blue-600">
-                    <i class="fas fa-exchange-alt text-xs text-white"></i>
-                </div>
-                <h2 data-i18n="import_export_title" class="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                    Import / Export
-                </h2>
-            </div>
-
-            <div class="space-y-3">
-                <div>
-                    <label for="io-mode-select" data-i18n="mode_label"
-                        class="block text-sm text-gray-600 dark:text-gray-300">Modalità</label>
-                    <select id="io-mode-select"
-                        class="mt-1 w-full rounded-lg border border-gray-300 py-2 px-3 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200">
-                        <option data-i18n="export_option" value="export">
-                            Export
-                        </option>
-                        <option data-i18n="import_option" value="import">
-                            Import
-                        </option>
-                    </select>
-                </div>
-
-                <div>
-                    <label for="io-path-input" data-i18n="destination_path"
-                        class="block text-sm text-gray-600 dark:text-gray-300">Percorso</label>
-                    <input id="io-path-input" type="text" placeholder="/sdcard/Download/profiles.json"
-                        class="mt-1 w-full rounded-lg border border-gray-300 py-2 px-3 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200" />
-                    <p data-i18n="export_desc" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                        Inserisci il percorso di destinazione per l'export o
-                        il percorso sorgente per l'import.
-                    </p>
-                </div>
-
-                <div class="flex items-center gap-3">
-                    <button id="io-action-btn"
-                        class="rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 px-3 py-2 text-sm text-white shadow-md"
-                        data-i18n="run">
-                        Esegui
-                    </button>
-                    <button id="io-back-btn" class="rounded-lg bg-gray-200 px-3 py-2 text-sm text-gray-800 shadow-sm"
-                        data-i18n="back_button">
-                        Indietro
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Success Toast - Always visible -->
-    <div id="success-toast"
-        class="toast-hidden fixed top-4 right-4 z-50 translate-x-full transform rounded-lg bg-green-500 px-4 py-2 text-white shadow-lg transition-transform duration-300">
-        <div class="flex items-center space-x-2">
-            <i class="fas fa-check-circle text-sm"></i>
-            <span id="success-message" class="text-sm" data-i18n="operation_completed">Operazione completata!</span>
-        </div>
-    </div>
-
-    <!-- Error Toast - Always visible -->
-    <div id="error-toast"
-        class="toast-hidden fixed top-4 right-4 z-50 translate-x-full transform rounded-lg bg-red-500 px-4 py-2 text-white shadow-lg transition-transform duration-300">
-        <div class="flex items-center space-x-2">
-            <i class="fas fa-exclamation-circle text-sm"></i>
-            <span id="error-message" class="text-sm" data-i18n="operation_error">Errore nell'operazione!</span>
-        </div>
-    </div>
-    <!-- Language Selection Modal -->
-    <dialog id="language_modal" class="modal rounded-lg border-none bg-white p-0 shadow-xl dark:bg-gray-800">
-        <div class="p-6">
-            <div class="mb-4 flex items-center justify-between">
-                <h3 data-i18n="select_language" class="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                    Select Language
-                </h3>
-                <button id="language-modal-close" onclick="language_modal.close()"
-                    class="flex items-center justify-center h-8 w-8 rounded-md bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 border border-gray-100 shadow-sm">
-                    <i class="fas fa-times text-sm"></i>
-                </button>
-            </div>
-
-            <div class="mb-2 text-sm text-gray-600 dark:text-gray-400">
-                <div data-i18n="select_language_desc_1">Choose your preferred interface language.</div>
-                <div data-i18n="select_language_desc_2" class="mt-1">The app will remember your choice.</div>
-            </div>
-
-            <div id="language_selection" class="flex flex-col gap-2 mt-4">
-                <!-- Language buttons will be populated by JavaScript (vertical list for mobile) -->
-            </div>
-
-
-        </div>
-    </dialog>
+  </div>
+  <dialog id="migration-dialog" aria-labelledby="migration-title" class="max-w-lg w-11/12 max-h-[80vh] overflow-y-auto rounded border p-4 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+    <h2 id="migration-title" data-i18n="migration_title" class="font-bold">Legacy configuration imported</h2>
+    <p id="migration-summary" class="my-3"></p>
+    <p data-i18n="migration_boundary" class="my-3 text-sm">Only user 0 selections were inherited. Other users and profiles were not selected. System and shared UIDs were skipped; review them manually. An ordinary UID can still affect app functionality.</p>
+    <p data-i18n="migration_backup" class="my-3 text-sm">The original v1.2 file was kept. This report describes the import, not the current rule state. Reboot after upgrading to remove old untagged rules.</p>
+    <p id="migration-skipped" class="whitespace-pre-wrap break-all text-sm"></p>
+    <button id="migration-dismiss" data-i18n="migration_dismiss" class="mt-4 text-blue-600 dark:text-blue-400">Understood</button>
+  </dialog>
+  <dialog id="language_modal" class="rounded border p-4 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+    <h2 data-i18n="select_language">Select Language</h2>
+    <div id="language_selection" class="flex flex-col gap-2 my-3"></div>
+    <form method="dialog"><button data-i18n="close">Close</button></form>
+  </dialog>
 </body>
-
 </html>

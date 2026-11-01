@@ -30,13 +30,8 @@ const translationModules = import.meta.glob(
 // Synchronous translation lookup
 // This function also will parse args from it's input
 function getTranslationSync(key, ...args) {
-  if (!currentTranslations) {
-    console.error("Translations not loaded!");
-    return key;
-  }
-
   const keys = key.split(".");
-  let value = currentTranslations;
+  let value = currentTranslations || cachedEnglishTranslations;
 
   // Try current language
   for (const k of keys) {
@@ -99,6 +94,11 @@ function applyTranslations(translations) {
     for (const key of keys) {
       value = value?.[key];
       if (value === undefined) break;
+    }
+
+    if (value === undefined) {
+      value = cachedEnglishTranslations;
+      for (const key of keys) value = value?.[key];
     }
 
     if (value !== undefined) {
@@ -168,6 +168,8 @@ function applyTranslations(translations) {
       if (el.tagName === "BUTTON") el.textContent = value;
     }
   });
+  // Modified: refresh per-user status labels when the language changes.
+  window.dispatchEvent(new Event("languagechange"));
 }
 
 async function initI18n() {
@@ -187,8 +189,7 @@ async function initI18n() {
       const button = document.createElement("button");
       button.textContent = name;
       button.dataset.lang = code;
-      button.className =
-        "btn btn-block bg-primary hover:bg-primary text-on-primary py-1 w-full rounded-md text-left";
+      button.className = "w-full rounded border p-2 text-left dark:border-gray-600";
       button.setAttribute("role", "button");
       button.setAttribute("aria-pressed", "false");
       languageSelection.appendChild(button);
@@ -196,34 +197,13 @@ async function initI18n() {
 
     // Determine initial language
     const savedLang = localStorage.getItem("selectedLanguage");
-    const browserLangs = [
-      ...(navigator.languages || []),
-      navigator.language,
-      navigator.userLanguage,
-    ].filter(Boolean);
-
-    let lang = savedLang || "en";
-    if (!savedLang) {
-      for (const browserLang of browserLangs) {
-        const normalizedLang = browserLang.toLowerCase().replace(/_/g, "-");
-        if (allLanguages[normalizedLang]) {
-          lang = normalizedLang;
-          break;
-        }
-        const baseLang = normalizedLang.split("-")[0];
-        if (allLanguages[baseLang]) {
-          lang = baseLang;
-          break;
-        }
-      }
-    }
+    const lang = savedLang || "en";
 
     currentTranslations = await loadTranslations(lang);
     applyTranslations(currentTranslations);
 
     // Handle settings button click
     languageBtn.addEventListener("click", () => {
-      document.documentElement.classList.add("modal-open");
       languageModal.showModal();
     });
 

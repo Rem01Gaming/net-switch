@@ -1,151 +1,414 @@
 #!/bin/sh
+# Modified: shared per-user backend for the CLI, WebUI and boot service.
 
-JSON_FILE="/data/adb/.config/net-switch/isolated.json"
+umask 077
+export LC_ALL=C
+CONFIG_DIR=${NETSWITCH_CONFIG_DIR:-/data/adb/.config/net-switch}
+LOCK=${NETSWITCH_LOCK_DIR:-/dev/.net-switch-lock}
+CONFIG=$CONFIG_DIR/isolated.json
+LEGACY_CONFIG=${NETSWITCH_LEGACY_CONFIG:-/data/adb/net-switch/isolated.json}
+MIGRATION_REPORT=$CONFIG_DIR/migration.tsv
+CHAIN=NETSWITCH
+transaction=0
+migration_report_committed=0
 
-cli_usage() {
-	echo "Usage: netswitch {block|unblock|list} [package-name...]"
-	echo "Commands:"
-	echo "  block <package-name> [package-name...]    Block internet access for specified packages"
-	echo "  unblock <package-name|all> [package-name...]  Unblock internet access for specified packages"
-	echo "  list                                   Show currently blocked packages"
+error() { echo "net-switch: $*" >&2; }
+die() { error "$*"; exit 1; }
+usage() {
+    cat <<'EOF'
+Usage: netswitch COMMAND [OPTIONS] [PACKAGES...]
+  block [--user ID | --all-users] [--allow-shared-uid] PACKAGE...
+  unblock [--user ID | --all-users] PACKAGE...
+  unblock all                 Remove all selections and module rules
+  list                        Show selections, UID peers and actual rule state
+  apply                       Refresh installed UIDs and reconcile module rules
+  migrate                     Import eligible legacy selections for user 0 once
+  snapshot                    Tab-separated inventory, selections and rule state
+  replace [--allow-shared-uid] JSON_ARRAY  Apply a complete profile
+  clear                       Remove module rules, retain saved selections
+
+The default user is 0. --all-users selects currently installed instances only.
+block, unblock, apply and replace accept --snapshot for the WebUI.
+Shared/system UIDs affect all traffic owned by that UID, including services
+not represented by package names. Review the reported scope before opting in.
+EOF
 }
 
-get_uid() {
-	package="$1"
-	uid="$(grep "^$package" /data/system/packages.list | awk '{print $2; exit}')"
-	[ ! -n "$uid" ] && return 1
-	echo "$uid"
-	return 0
+# Legacy entries mean user 0; other users are stored as "10:com.example.app".
+# Accept only this restricted JSON string-array format; never evaluate it.
+parse_config() {
+    awk '
+    { text=text $0 "\n" }
+    END {
+        sub(/^[ \t\r\n]*/, "", text); sub(/[ \t\r\n]*$/, "", text)
+        if (text=="") exit 0
+        if (substr(text,1,1)!="[" || substr(text,length(text),1)!="]") exit 1
+        text=substr(text,2,length(text)-2)
+        sub(/^[ \t\r\n]*/, "", text)
+        if (text=="") exit 0
+        while (length(text)) {
+            if (!match(text, /^"([0-9]+:)?[A-Za-z_][A-Za-z0-9_.]*"/)) exit 1
+            key=substr(text,2,RLENGTH-2); text=substr(text,RLENGTH+1)
+            user=0; package=key
+            if (index(key, ":")) { split(key,p,":"); user=p[1]; package=p[2] }
+            if (user !~ /^(0|[1-9][0-9]*)$/ || user+0>21474) exit 1
+            if (user+0==0) key=package
+            if (!seen[key]++) print key
+            sub(/^[ \t\r\n]*/, "", text)
+            if (text=="") break
+            if (substr(text,1,1)!=",") exit 1
+            text=substr(text,2); sub(/^[ \t\r\n]*/, "", text)
+            if (text=="") exit 1
+        }
+    }' "$1"
 }
 
-read_json() {
-	if [ -f "$JSON_FILE" ]; then
-		cat "$JSON_FILE" | tr -d '[]" ' | tr ',' ' '
-	fi
+write_config() {
+    awk 'BEGIN { printf "[" } { printf "%s\"%s\"", (NR==1 ? "" : ","), $0 }
+         END { print "]" }' "$1" > "$2"
 }
 
-write_json() {
-	if [ $# -eq 0 ]; then
-		echo "[]" >"$JSON_FILE"
-		return 0
-	fi
-
-	(
-		printf "["
-		first=1
-		for pkg in "$@"; do
-			if [ $first -eq 1 ]; then
-				printf "\"%s\"" "$pkg"
-				first=0
-			else
-				printf ",\"%s\"" "$pkg"
-			fi
-		done
-		printf "]"
-	) >"$JSON_FILE"
+# Android passes shell command descriptors to system_server. Do not pass files
+# in our private /dev lock directory, including the user-list loop's stdin.
+query_pm() {
+    query_output=$(pm "$@" </dev/null 2>&1)
+    query_result=$?
+    printf '%s\n' "$query_output"
+    return "$query_result"
 }
 
-block_package() {
-	package="$1"
-	uid="$(get_uid "$package")"
-	if [ $? -ne 0 ] || [ -z "$uid" ]; then
-		echo "Error: Package '$package' not found"
-		return 1
-	fi
+inventory() (
+    query_pm list users > "$LOCK/users.raw" || { error "Cannot enumerate Android users"; return 1; }
+    awk '
+    /^[ \t]*Users:[ \t]*$/ { next }
+    /^[ \t]*UserInfo\{[0-9]+:.*:[0-9a-fA-F]+\}([ \t]+running)?[ \t]*$/ {
+        line=$0; sub(/^[ \t]*UserInfo\{/, "", line)
+        id=line; sub(/:.*/, "", id)
+        name=line; sub(/^[0-9]+:/, "", name); sub(/:[0-9a-fA-F]+\}.*/, "", name)
+        gsub(/[\t\r]/, " ", name)
+        if (id+0>21474 || seen[id]++) { bad=1; next }
+        print id "\t" name "\t" ($0 ~ /\}[ \t]+running/ ? "running" : "not-running")
+        count++; next
+    }
+    NF { bad=1 }
+    END { if (bad || !count) exit 1 }' "$LOCK/users.raw" > "$LOCK/users" || {
+        error "Unrecognized or incomplete Android user list"; return 1;
+    }
+    : > "$LOCK/apps"
+    while IFS="$(printf '\t')" read -r user name state; do
+        query_pm list packages -U --user "$user" > "$LOCK/packages.raw" 2> "$LOCK/packages.err" || {
+            error "Cannot query packages for user $user; rules unchanged"; return 1;
+        }
+        # Some Android versions print an error but still return success.
+        if [ -s "$LOCK/packages.err" ] || ! grep -q '[^[:space:]]' "$LOCK/packages.raw"; then
+            error "Package query is empty or reported an error for user $user; rules unchanged"
+            cat "$LOCK/packages.err" >&2
+            return 1
+        fi
+        awk -v user="$user" '
+        /^package:[A-Za-z_][A-Za-z0-9_.]* uid:[0-9]+$/ {
+            package=$1; sub(/^package:/, "", package)
+            uid=$2; sub(/^uid:/, "", uid)
+            if (uid+0>4294967294 || seen[package]++) { bad=1; next }
+            printf "%s\t%s\t%.0f\n", user, package, uid; next
+        }
+        NF { bad=1 }
+        END { if (bad) exit 1 }' "$LOCK/packages.raw" >> "$LOCK/apps" || {
+            error "Invalid package/UID response for user $user"; return 1;
+        }
+    done < "$LOCK/users"
+)
 
-	iptables -I OUTPUT -m owner --uid-owner "$uid" -j REJECT
-	ip6tables -I OUTPUT -m owner --uid-owner "$uid" -j REJECT
+# Read both families before mutation. Never flush OUTPUT or accept unknown rules
+# in our reserved chain. The tagged OUTPUT jump is the only external rule we own.
+capture() (
+    tool=$1; prefix=$2
+    "$tool" -w 5 -S > "$prefix.raw" || { error "Cannot read $tool rules"; exit 1; }
+    awk -v chain="$CHAIN" -v meta="$prefix.meta" '
+    $0=="-N " chain { exists=1; next }
+    $1=="-A" && $2==chain {
+        if ($3!="-m" || $4!="owner" || $5!="--uid-owner" || $6!~/^[0-9]+$/ ||
+            $7!="-j" || $8!="REJECT" ||
+            (NF!=8 && !(NF==10 && $9=="--reject-with" &&
+            ($10=="icmp-port-unreachable" || $10=="icmp6-port-unreachable")))) bad=1
+        else print $6
+        next
+    }
+    { line=$0; gsub(/"/, "", line)
+      if (line=="-A OUTPUT -m comment --comment net-switch -j " chain) hooks++ }
+    END { print exists+0, hooks+0 > meta; if (bad) exit 1 }
+    ' "$prefix.raw" > "$prefix.uids" || { error "Unexpected rules in $CHAIN ($tool)"; exit 1; }
+)
 
-	current_packages="$(read_json)"
-	for app in $current_packages; do
-		if [ "$app" = "$package" ]; then
-			echo "Package $package is already blocked"
-			return 0
-		fi
-	done
+# Add before removing: unchanged UIDs never lose their rule during a refresh.
+# Address families are separate; the caller rolls both back on any failure.
+reconcile() (
+    tool=$1; wanted=$2; current=$3; target_hooks=$4; target_exists=$5
+    read -r exists hooks < "$current.meta"
+    if [ "$exists" = 0 ] && [ "$target_exists" = 1 ]; then
+        "$tool" -w 5 -N "$CHAIN" || exit 1
+    fi
+    awk 'FILENAME==ARGV[1] { present[$1]=1; next }
+         !($1 in present) { print $1 }' "$current.uids" "$wanted" > "$current.add" || exit 1
+    while IFS= read -r uid; do
+        "$tool" -w 5 -A "$CHAIN" -m owner --uid-owner "$uid" -j REJECT || exit 1
+    done < "$current.add"
+    while [ "$hooks" -lt "$target_hooks" ]; do
+        "$tool" -w 5 -I OUTPUT 1 -m comment --comment net-switch -j "$CHAIN" || exit 1
+        hooks=$((hooks + 1))
+    done
+    awk 'FILENAME==ARGV[1] { wanted[$1]=1; next }
+         !wanted[$1] || seen[$1]++ { print $1 }' "$wanted" "$current.uids" > "$current.delete"
+    while IFS= read -r uid; do
+        "$tool" -w 5 -D "$CHAIN" -m owner --uid-owner "$uid" -j REJECT || exit 1
+    done < "$current.delete"
+    while [ "$hooks" -gt "$target_hooks" ]; do
+        "$tool" -w 5 -D OUTPUT -m comment --comment net-switch -j "$CHAIN" || exit 1
+        hooks=$((hooks - 1))
+    done
+    if [ "$target_exists" = 0 ] && [ "$exists" = 1 ]; then
+        "$tool" -w 5 -X "$CHAIN" || exit 1
+    fi
+)
 
-	write_json $current_packages $package
-	echo "Blocked internet access for $package (UID: $uid)"
+rollback() {
+    rollback_failed=0
+    for family in iptables ip6tables; do
+        if capture "$family" "$LOCK/now-$family"; then
+            read -r old_exists old_hooks < "$LOCK/old-$family.meta"
+            sort -u "$LOCK/old-$family.uids" > "$LOCK/restore-$family"
+            reconcile "$family" "$LOCK/restore-$family" "$LOCK/now-$family" "$old_hooks" "$old_exists" || rollback_failed=1
+        else
+            rollback_failed=1
+        fi
+    done
+    [ "$rollback_failed" = 0 ] || error "ROLLBACK INCOMPLETE: IPv4/IPv6 may differ. Inspect snapshot and retry apply or clear."
+    return "$rollback_failed"
 }
 
-unblock_package() {
-	package="$1"
-	uid="$(get_uid "$package")"
-	if [ $? -ne 0 ] || [ -z "$uid" ]; then
-		echo "Error: Package '$package' not found"
-		return 1
-	fi
-
-	iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null
-	ip6tables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null
-
-	current_packages="$(read_json)"
-	new_packages=""
-	for app in $current_packages; do
-		[ "$app" != "$package" ] && new_packages="$new_packages $app"
-	done
-
-	write_json $new_packages
-	echo "Unblocked internet access for $package (UID: $uid)"
+finish() {
+    result=$?
+    trap - EXIT HUP INT TERM
+    if [ "$transaction" = 1 ]; then
+        error "Update failed; restoring previous module rules"
+        rollback || result=2
+        [ "$migration_report_committed" = 0 ] || rm -f "$MIGRATION_REPORT"
+    fi
+    rm -f "$CONFIG_DIR/.isolated.next" "$CONFIG_DIR/.migration.next" "$LOCK"/*
+    rmdir "$LOCK"
+    exit "$result"
 }
 
-unblock_all() {
-	for package in $(read_json); do
-		unblock_package "$package"
-	done
-	write_json
-	echo "Unblocked all packages"
+resolve() {
+    awk -F '\t' 'FILENAME==ARGV[1] { selected[$0]=1; next }
+    { key=($1==0 ? $2 : $1 ":" $2); if (selected[key]) print $3 }
+    ' "$LOCK/next" "$LOCK/apps" | sort -u > "$LOCK/wanted"
 }
 
-list_blocked() {
-	packages="$(read_json)"
-	if [ -z "$packages" ]; then
-		echo "No packages are currently blocked"
-		exit 0
-	fi
-
-	echo "Currently blocked packages:"
-	for package in $packages; do
-		uid="$(get_uid "$package")"
-		if [ $? -eq 0 ] && [ -n "$uid" ]; then
-			echo "- $package (UID: $uid)"
-		else
-			echo "- $package (package no longer exists)"
-		fi
-	done
+report_shared() {
+    awk -F '\t' -v allow="$allow_shared" '
+    FILENAME==ARGV[1] { old[$0]=1; next }
+    FILENAME==ARGV[2] { selected[$0]=1; next }
+    {
+        key=($1==0 ? $2 : $1 ":" $2); uid=$3
+        peers[uid]=peers[uid] " user=" $1 ":" $2; count[uid]++
+        if (selected[key]) { chosen[uid]=1; if (!old[key]) added[uid]=1 }
+    }
+    END {
+        for (uid in chosen) if (count[uid]>1 || uid%100000<10000) {
+            print "net-switch: UID " uid " affects:" peers[uid] > "/dev/stderr"
+            if (uid%100000<10000)
+                print "net-switch: System UID: services beyond these packages may also be affected." > "/dev/stderr"
+            if (added[uid] && !allow) denied=1
+        }
+        if (denied) {
+            print "net-switch: Review the UID scope, then repeat with --allow-shared-uid." > "/dev/stderr"
+            exit 1
+        }
+    }' "$LOCK/old" "$LOCK/next" "$LOCK/apps"
 }
 
-handle_block() {
-	if [ $# -eq 0 ]; then
-		echo -e "Error: Bad arguments\nTry 'netswitch help' for more information."
-		exit 1
-	fi
-
-	for package in "$@"; do
-		block_package "$package"
-	done
+prepare_migration() {
+    parse_config "$LEGACY_CONFIG" > "$LOCK/legacy" || die "Invalid legacy configuration; unchanged"
+    : > "$LOCK/next"
+    : > "$LOCK/migration"
+    # v1.2 rules targeted user 0. Do not infer another user from the foreground
+    # session, retain missing packages, or implicitly consent to shared UIDs.
+    awk -F '\t' -v next_config="$LOCK/next" -v report="$LOCK/migration" '
+    FILENAME==ARGV[1] { packages[++n]=$0; next }
+    { peers[$3]++; if ($1==0) uid[$2]=$3 }
+    END {
+        for (i=1; i<=n; i++) {
+            package=packages[i]; owner=""; reason="imported"
+            if (index(package, ":")) reason="scope"
+            else if (!(package in uid)) reason="missing"
+            else {
+                owner=uid[package]
+                if (owner%100000<10000) reason="system"
+                else if (peers[owner]>1) reason="shared"
+            }
+            if (reason=="imported") print package > next_config
+            printf "migration\t%s\t%s\t%s\n", reason, package, (owner=="" ? "-" : owner) > report
+        }
+    }' "$LOCK/legacy" "$LOCK/apps" || exit 1
+    [ ! -d "$MIGRATION_REPORT" ] || die "Cannot save migration report"
+    cp "$LOCK/migration" "$CONFIG_DIR/.migration.next" || exit 1
 }
 
-handle_unblock() {
-	if [ $# -eq 0 ]; then
-		echo -e "Error: Bad arguments\nTry 'netswitch help' for more information."
-		exit 1
-	fi
-
-	if [ "$1" = "all" ]; then
-		unblock_all
-		exit 0
-	fi
-
-	for package in "$@"; do
-		unblock_package "$package"
-	done
+snapshot() {
+    awk -F '\t' '{ print "user\t" $0 }' "$LOCK/users"
+    awk '{ print "selection\t" $0 }' "$LOCK/old"
+    awk -F '\t' '{ print "app\t" $0 }' "$LOCK/apps"
+    if [ -f "$MIGRATION_REPORT" ]; then cat "$MIGRATION_REPORT"; fi
+    for family in iptables ip6tables; do
+        read -r exists hooks < "$LOCK/old-$family.meta"
+        if [ "$hooks" -gt 0 ]; then
+            awk -v family="$family" '{ print "rule\t" family "\t" $0 }' "$LOCK/old-$family.uids"
+        fi
+    done
 }
 
-case "$1" in
-"block") shift && handle_block $@ ;;
-"unblock") shift && handle_unblock $@ ;;
-"list") list_blocked ;;
-"help") cli_usage ;;
-*) cli_usage && exit 1 ;;
+command=${1:-help}
+[ "$#" = 0 ] || shift
+case "$command" in help|--help|-h) usage; exit 0;; esac
+case "$command" in block|unblock|apply|migrate|snapshot|list|replace|clear) ;; *) usage; exit 1;; esac
+allow_shared=0
+return_snapshot=0
+user=0
+scope_set=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --user)
+            [ "$scope_set" = 0 ] && [ "$#" -ge 2 ] || die "Choose one user scope"
+            user=$2; scope_set=1; shift 2
+            case "$user" in ''|*[!0-9]*|0[0-9]*) die "Invalid user ID";; esac
+            [ "$user" -le 21474 ] || die "Invalid user ID";;
+        --all-users)
+            [ "$scope_set" = 0 ] || die "Choose one user scope"
+            user=all; scope_set=1; shift;;
+        --allow-shared-uid) allow_shared=1; shift;;
+        --snapshot) return_snapshot=1; shift;;
+        --*) die "Unknown option: $1";;
+        *) break;;
+    esac
+done
+case "$command" in
+    block|unblock) [ "$#" -gt 0 ] || die "Specify a package";;
+    replace) [ "$#" = 1 ] && [ "$scope_set" = 0 ] || die "Specify one JSON array";;
+    *) [ "$#" = 0 ] && [ "$scope_set" = 0 ] || die "Unexpected arguments";;
 esac
+if [ "$return_snapshot" = 1 ]; then
+    case "$command" in block|unblock|apply|replace) ;; *) die "--snapshot requires a rule update";; esac
+fi
+
+mkdir -p "$CONFIG_DIR" || die "Cannot create config directory"
+mkdir "$LOCK" 2>/dev/null || die "Backend busy (or stale lock: $LOCK). Do not remove a live process lock."
+trap finish EXIT
+trap 'exit 1' HUP INT TERM
+printf '%s\n' "$$" > "$LOCK/pid"
+# The installer creates a zero-byte file for a fresh configuration. A saved []
+# is an explicit empty selection and must never resurrect the old block list.
+legacy_pending=0
+if [ ! -s "$CONFIG" ] && [ -s "$LEGACY_CONFIG" ]; then legacy_pending=1; fi
+if [ "$command" = apply ] && [ "$legacy_pending" = 1 ]; then command=migrate; fi
+if [ "$command" = migrate ] && [ "$legacy_pending" = 0 ]; then
+    echo "Existing configuration retained; no legacy migration needed."
+    exit 0
+fi
+emergency=0
+[ "$command" = clear ] && emergency=1
+if [ "$command" = unblock ] && [ "$#" = 1 ] && [ "$1" = all ] && [ "$scope_set" = 0 ]; then emergency=1; fi
+if [ -f "$CONFIG" ] && [ "$emergency" = 0 ]; then
+    parse_config "$CONFIG" > "$LOCK/old" || die "Invalid isolated.json; unchanged"
+else
+    : > "$LOCK/old"
+fi
+cp "$LOCK/old" "$LOCK/next" || exit 1
+
+# Emergency clear/unblock-all work even if PackageManager or config is broken.
+if [ "$emergency" = 0 ]; then
+    inventory || exit 1
+    case "$command" in
+        migrate) prepare_migration;;
+        block|unblock)
+            : > "$LOCK/targets"
+            for package in "$@"; do
+                printf '%s\n' "$package" | grep -Eq '^[A-Za-z_][A-Za-z0-9_.]*$' || die "Invalid package name"
+                if [ "$user" = all ]; then
+                    awk -F '\t' -v package="$package" '$2==package { print ($1==0 ? $2 : $1 ":" $2) }' "$LOCK/apps" >> "$LOCK/targets"
+                    if [ "$command" = unblock ]; then
+                        awk -v package="$package" '$0==package || substr($0,index($0,":")+1)==package { print }' "$LOCK/old" >> "$LOCK/targets"
+                    fi
+                else
+                    if [ "$user" = 0 ]; then echo "$package"; else echo "$user:$package"; fi >> "$LOCK/targets"
+                fi
+                if [ "$command" = block ]; then
+                    awk -F '\t' -v package="$package" -v user="$user" '$2==package && (user=="all" || $1==user) { found=1 } END { exit !found }' "$LOCK/apps" || die "Package $package not installed for requested user(s)"
+                fi
+            done
+            if [ "$command" = block ]; then
+                cat "$LOCK/old" "$LOCK/targets" | sort -u > "$LOCK/next"
+            else
+                awk 'FILENAME==ARGV[1] { remove[$0]=1; next } !remove[$0]' "$LOCK/targets" "$LOCK/old" > "$LOCK/next"
+            fi;;
+        replace)
+            printf '%s\n' "$1" > "$LOCK/input"
+            parse_config "$LOCK/input" > "$LOCK/next" || die "Invalid profile array";;
+    esac
+    report_shared || exit 1
+    resolve
+else
+    : > "$LOCK/wanted"
+fi
+
+capture iptables "$LOCK/old-iptables" || exit 1
+capture ip6tables "$LOCK/old-ip6tables" || exit 1
+case "$command" in
+    snapshot) snapshot; exit 0;;
+    list)
+        snapshot | awk -F '\t' '
+        $1=="selection" { selected[$2]=1 }
+        $1=="app" { key=($2==0 ? $3 : $2 ":" $3); uid[key]=$4 }
+        $1=="rule" { rules[$2,$3]=1 }
+        END {
+            for (key in selected) {
+                user=0; package=key
+                if (index(key,":")) { split(key,p,":"); user=p[1]; package=p[2] }
+                if (key in uid) printf "- user %s: %s (UID %s; IPv4 %s, IPv6 %s)\n",
+                    user, package, uid[key], (rules["iptables",uid[key]] ? "blocked" : "not applied"),
+                    (rules["ip6tables",uid[key]] ? "blocked" : "not applied")
+                else printf "- user %s: %s (not installed / user unavailable; selection retained)\n", user, package
+                count++
+            }
+            if (!count) print "No packages selected."
+        }'
+        echo "Status describes Net Switch only; other firewalls and legacy rules are not included."
+        exit 0;;
+esac
+
+write_config "$LOCK/next" "$CONFIG_DIR/.isolated.next" || exit 1
+transaction=1
+if [ "$emergency" = 1 ]; then target=0; else target=1; fi
+reconcile iptables "$LOCK/wanted" "$LOCK/old-iptables" "$target" "$target" || exit 1
+reconcile ip6tables "$LOCK/wanted" "$LOCK/old-ip6tables" "$target" "$target" || exit 1
+if [ "$command" = migrate ]; then
+    mv -f "$CONFIG_DIR/.migration.next" "$MIGRATION_REPORT" || exit 1
+    migration_report_committed=1
+fi
+if [ "$command" != clear ]; then
+    mv -f "$CONFIG_DIR/.isolated.next" "$CONFIG" || exit 1
+fi
+transaction=0
+if [ "$return_snapshot" = 1 ]; then
+    # Reuse the inventory resolved for this update; read the actual rules again
+    # rather than making the WebUI repeat every PackageManager query.
+    if [ "$emergency" = 1 ]; then
+        inventory || die "Rules updated, but package state is unavailable"
+    fi
+    cp "$LOCK/next" "$LOCK/old" || exit 1
+    capture iptables "$LOCK/old-iptables" && capture ip6tables "$LOCK/old-ip6tables" ||
+        die "Rules updated, but final rule state is unavailable"
+    snapshot
+else
+    echo "Net Switch rules updated for IPv4 and IPv6."
+fi
